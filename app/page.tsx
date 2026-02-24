@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { format } from "date-fns";
 import {
   LineChart,
@@ -26,7 +26,8 @@ import {
 import { fetchState } from "@/lib/api";
 import type { LiveState, TradeRecord, DecisionLogEntry } from "@/lib/types";
 
-const POLL_MS = 5000;
+const AUTO_BURST_SECONDS = 10;
+const AUTO_BURST_INTERVAL_MS = 1000;
 
 function formatDuration(sec: number): string {
   const h = Math.floor(sec / 3600);
@@ -53,30 +54,55 @@ export default function DashboardPage() {
   const [state, setState] = useState<LiveState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [isAutoBurst, setIsAutoBurst] = useState<boolean>(false);
 
+  const load = useCallback(async () => {
+    try {
+      const data = await fetchState();
+      setState(data);
+      setError(null);
+      setLastUpdated(new Date());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to fetch state");
+    }
+  }, []);
+
+  // Initial fetch and start 1s burst for 10s on mount
   useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const data = await fetchState();
-        if (!cancelled) {
-          setState(data);
-          setError(null);
-          setLastUpdated(new Date());
-        }
-      } catch (e) {
-        if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Failed to fetch state");
-        }
-      }
-    };
     load();
-    const id = setInterval(load, POLL_MS);
+    setIsAutoBurst(true);
+  }, [load]);
+
+  // Auto-burst: refresh every second for AUTO_BURST_SECONDS, then pause
+  useEffect(() => {
+    if (!isAutoBurst) return;
+    let cancelled = false;
+    let ticks = 0;
+
+    const tick = async () => {
+      if (cancelled) return;
+      await load();
+    };
+
+    // First immediate refresh in this burst
+    void tick();
+
+    const id = setInterval(async () => {
+      if (cancelled) return;
+      ticks += 1;
+      if (ticks >= AUTO_BURST_SECONDS) {
+        clearInterval(id);
+        setIsAutoBurst(false);
+        return;
+      }
+      await load();
+    }, AUTO_BURST_INTERVAL_MS);
+
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, []);
+  }, [isAutoBurst, load]);
 
   if (error && !state) {
     return (
@@ -108,7 +134,7 @@ export default function DashboardPage() {
   const market = state?.currentMarket ?? null;
   const priceToBeat = state?.priceToBeat ?? null;
   const trades = state?.trades ?? [];
-  const recentTrades = trades.slice(0, 20);
+  const displayTrades = [...trades].reverse(); // show newest first, all trades
   const wins = trades.filter((t) => t.result === "WIN").length;
   const losses = trades.filter((t) => t.result === "LOSS").length;
   const totalResolved = wins + losses;
@@ -126,9 +152,22 @@ export default function DashboardPage() {
           </div>
           <div className="flex items-center gap-3 text-sm text-[#8b949e]">
             <span className="flex items-center gap-1">
-              <RefreshCw className="w-4 h-4" />
+              <RefreshCw className={`w-4 h-4 ${isAutoBurst ? "animate-spin" : ""}`} />
               Updated {lastUpdated ? format(lastUpdated, "HH:mm:ss") : "—"}
             </span>
+            <button
+              type="button"
+              onClick={() => setIsAutoBurst(true)}
+              disabled={isAutoBurst}
+              className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                isAutoBurst
+                  ? "border-[#30363d] text-[#6e7681] cursor-default"
+                  : "border-[#30363d] text-[#e6edf3] hover:bg-[#21262d]"
+              }`}
+            >
+              <RefreshCw className="w-3 h-3" />
+              {isAutoBurst ? "Auto refresh (1s · 10s)" : "Refresh (1s · 10s)"}
+            </button>
             {state?.botPaused && (
               <span className="flex items-center gap-1 text-amber-400">
                 <Pause className="w-4 h-4" /> Paused
@@ -324,9 +363,9 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* Recent Trades */}
+        {/* Trades */}
         <section className="rounded-xl bg-[#161b22] border border-[#30363d] overflow-hidden mb-6">
-          <h2 className="text-sm font-semibold text-[#8b949e] p-4 pb-0">Recent Trades (last 20)</h2>
+          <h2 className="text-sm font-semibold text-[#8b949e] p-4 pb-0">All Trades (latest first)</h2>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -341,14 +380,14 @@ export default function DashboardPage() {
                 </tr>
               </thead>
               <tbody>
-                {recentTrades.length === 0 ? (
+                {displayTrades.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="py-8 text-center text-[#6e7681]">
                       No trades yet.
                     </td>
                   </tr>
                 ) : (
-                  recentTrades.map((t, i) => (
+                  displayTrades.map((t, i) => (
                     <tr key={i} className="border-b border-[#21262d] hover:bg-[#21262d]/50">
                       <td className="py-2 px-4 text-[#e6edf3] whitespace-nowrap">
                         {format(new Date(t.timestamp), "HH:mm:ss")}
@@ -378,7 +417,7 @@ export default function DashboardPage() {
         </section>
 
         <p className="text-center text-[#6e7681] text-xs">
-          Auto-refresh every 5s · Last updated {lastUpdated ? format(lastUpdated, "PPp") : "—"}
+          Auto-refresh in bursts (1s × 10s) · Last updated {lastUpdated ? format(lastUpdated, "PPp") : "—"}
         </p>
       </div>
     </div>
