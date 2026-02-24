@@ -39,10 +39,21 @@ export interface LiveState {
   currentMarket: CurrentMarket | null;
   equity: number;
   livePnl: number;
-  decisionLog: unknown[];
+  decisionLog: DecisionLogEntry[];
   tradeEvents: unknown[];
   deferredResolutions: unknown[];
   trades: TradeRecord[];
+}
+
+/** One entry in the bot decision log (take / skip / error). */
+export interface DecisionLogEntry {
+  ts: string;
+  kind: "take" | "skip" | "error";
+  reason: string;
+  slug?: string;
+  side?: string;
+  price?: number;
+  size_usdc?: number;
 }
 
 /** Optional: bot can send equity curve points for chart */

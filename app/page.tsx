@@ -21,9 +21,10 @@ import {
   BarChart3,
   RefreshCw,
   AlertCircle,
+  MessageSquare,
 } from "lucide-react";
 import { fetchState } from "@/lib/api";
-import type { LiveState, TradeRecord } from "@/lib/types";
+import type { LiveState, TradeRecord, DecisionLogEntry } from "@/lib/types";
 
 const POLL_MS = 5000;
 
@@ -277,6 +278,52 @@ export default function DashboardPage() {
           )}
         </section>
 
+        {/* Decision log (why took / skipped / error) */}
+        <section className="rounded-xl bg-[#161b22] border border-[#30363d] overflow-hidden mb-6">
+          <h2 className="text-sm font-semibold text-[#8b949e] p-4 pb-2 flex items-center gap-2">
+            <MessageSquare className="w-4 h-4 text-[#2dd4bf]" />
+            Decision log (take / skip / error)
+          </h2>
+          <div className="px-4 pb-4 max-h-64 overflow-y-auto">
+            {(() => {
+              const raw = state?.decisionLog;
+              const entries = (Array.isArray(raw) ? raw : []).filter(
+                (e): e is DecisionLogEntry =>
+                  e != null && typeof e === "object" && "kind" in e && "reason" in e
+              );
+              const list = [...entries].reverse();
+              if (list.length === 0) {
+                return (
+                  <p className="text-[#6e7681] text-sm py-2">No decisions yet this session.</p>
+                );
+              }
+              return (
+                <ul className="space-y-2 text-sm">
+                  {list.map((e, i) => (
+                    <li
+                      key={i}
+                      className="flex flex-wrap items-baseline gap-2 py-1.5 border-b border-[#21262d] last:border-0"
+                    >
+                      <span className="text-[#6e7681] shrink-0">
+                        {format(new Date(e.ts), "HH:mm:ss")}
+                      </span>
+                      <DecisionKindBadge kind={e.kind} />
+                      <span className="text-[#e6edf3]">{e.reason}</span>
+                      {e.side != null && (
+                        <span className="text-[#8b949e] font-mono text-xs">
+                          {e.side}
+                          {e.price != null && ` @ ${e.price.toFixed(2)}`}
+                          {e.size_usdc != null && ` · $${e.size_usdc.toFixed(2)}`}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              );
+            })()}
+          </div>
+        </section>
+
         {/* Recent Trades */}
         <section className="rounded-xl bg-[#161b22] border border-[#30363d] overflow-hidden mb-6">
           <h2 className="text-sm font-semibold text-[#8b949e] p-4 pb-0">Recent Trades (last 20)</h2>
@@ -386,6 +433,20 @@ function ResultBadge({ result }: { result: string }) {
   return (
     <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${style}`}>
       {result}
+    </span>
+  );
+}
+
+function DecisionKindBadge({ kind }: { kind: "take" | "skip" | "error" }) {
+  const style =
+    kind === "take"
+      ? "bg-[#2dd4bf]/20 text-[#2dd4bf]"
+      : kind === "skip"
+        ? "bg-amber-500/20 text-amber-400"
+        : "bg-[#f87171]/20 text-[#f87171]";
+  return (
+    <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium shrink-0 ${style}`}>
+      {kind.toUpperCase()}
     </span>
   );
 }
