@@ -25,7 +25,7 @@ import {
 import { fetchState } from "@/lib/api";
 import type { LiveState, TradeRecord, DecisionLogEntry } from "@/lib/types";
 
-const AUTO_BURST_SECONDS = 10;
+const AUTO_BURST_SECONDS = 30;
 const AUTO_BURST_INTERVAL_MS = 1000;
 
 function formatDuration(sec: number): string {
@@ -164,7 +164,7 @@ export default function DashboardPage() {
     }
   }, []);
 
-  // Initial fetch and start 1s burst for 10s on mount
+  // Initial fetch and start 1s burst for 30s on mount
   useEffect(() => {
     load();
     setIsAutoBurst(true);
@@ -261,7 +261,7 @@ export default function DashboardPage() {
               }`}
             >
               <RefreshCw className="w-3 h-3" />
-              {isAutoBurst ? "Auto refresh (1s · 10s)" : "Refresh (1s · 10s)"}
+              {isAutoBurst ? "Auto refresh (1s · 30s)" : "Refresh (1s · 30s)"}
             </button>
             {state?.botPaused && (
               <span className="flex items-center gap-1 text-amber-400">
@@ -491,7 +491,7 @@ export default function DashboardPage() {
         </section>
 
         <p className="text-center text-[#6e7681] text-xs">
-          Auto-refresh in bursts (1s × 10s) · Last updated {lastUpdated ? format(lastUpdated, "PPp") : "—"}
+          Auto-refresh in bursts (1s × 30s) · Last updated {lastUpdated ? format(lastUpdated, "PPp") : "—"}
         </p>
       </div>
     </div>
