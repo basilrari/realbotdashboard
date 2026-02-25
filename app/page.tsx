@@ -38,15 +38,23 @@ function formatDuration(sec: number): string {
   return `${s}s`;
 }
 
-/** Build equity curve from trades (cumulative PnL over time) */
-function buildEquityCurve(trades: TradeRecord[]): { time: string; equity: number }[] {
-  const points: { time: string; equity: number }[] = [{ time: "", equity: 0 }];
-  let running = 0;
-  for (const t of [...trades].reverse()) {
+/** Build equity curve starting at starting balance, then trade PnL, then current equity. */
+function buildEquityCurve(
+  trades: TradeRecord[],
+  stateEquity: number,
+  livePnl: number
+): { time: string; equity: number }[] {
+  const startEquity = Math.max(0, stateEquity - livePnl);
+  const points: { time: string; equity: number }[] = [{ time: "Start", equity: startEquity }];
+  const sorted = [...trades].sort(
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  );
+  let running = startEquity;
+  for (const t of sorted) {
     running += t.pnl_usdc;
     points.push({ time: t.timestamp, equity: running });
   }
-  if (points.length === 1) points[0].time = "Start";
+  points.push({ time: "Now", equity: stateEquity });
   return points;
 }
 
@@ -139,7 +147,11 @@ export default function DashboardPage() {
   const losses = trades.filter((t) => t.result === "LOSS").length;
   const totalResolved = wins + losses;
   const winRate = totalResolved > 0 ? (wins / totalResolved) * 100 : 0;
-  const equityCurve = buildEquityCurve(trades);
+  const equityCurve = buildEquityCurve(
+    trades,
+    state?.equity ?? 0,
+    state?.livePnl ?? 0
+  );
 
   return (
     <div className="min-h-screen bg-[#0d1117] text-[#e6edf3] font-sans">
@@ -210,43 +222,47 @@ export default function DashboardPage() {
             Equity Curve
           </h2>
           <div className="h-64 sm:h-72">
-            {equityCurve.length > 1 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={equityCurve} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#30363d" />
-                  <XAxis
-                    dataKey="time"
-                    tick={{ fill: "#8b949e", fontSize: 11 }}
-                    tickFormatter={(v) => (v ? format(new Date(v), "HH:mm") : v)}
-                  />
-                  <YAxis
-                    tick={{ fill: "#8b949e", fontSize: 11 }}
-                    tickFormatter={(v) => `$${v}`}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: "#21262d",
-                      border: "1px solid #30363d",
-                      borderRadius: "8px",
-                    }}
-                    labelStyle={{ color: "#e6edf3" }}
-                    formatter={(value: number | undefined) => [`$${(value ?? 0).toFixed(2)}`, "Equity"]}
-                    labelFormatter={(label) => (label ? format(new Date(label), "PPp") : "Start")}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="equity"
-                    stroke="#2dd4bf"
-                    strokeWidth={2}
-                    dot={false}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="h-full flex items-center justify-center text-[#6e7681] text-sm">
-                No trades yet — equity curve will appear here.
-              </div>
-            )}
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={equityCurve} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#30363d" />
+                <XAxis
+                  dataKey="time"
+                  tick={{ fill: "#8b949e", fontSize: 11 }}
+                  tickFormatter={(v) =>
+                    v === "Start" ? "Start" : v === "Now" ? "Now" : format(new Date(v), "HH:mm")
+                  }
+                />
+                <YAxis
+                  tick={{ fill: "#8b949e", fontSize: 11 }}
+                  tickFormatter={(v) => `$${v}`}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: "#21262d",
+                    border: "1px solid #30363d",
+                    borderRadius: "8px",
+                  }}
+                  labelStyle={{ color: "#e6edf3" }}
+                  formatter={(value: number | undefined) => [`$${(value ?? 0).toFixed(2)}`, "Equity"]}
+                  labelFormatter={(label) =>
+                    label === "Start"
+                      ? "Start"
+                      : label === "Now"
+                        ? "Now"
+                        : label
+                          ? format(new Date(label), "PPp")
+                          : ""
+                  }
+                />
+                <Line
+                  type="monotone"
+                  dataKey="equity"
+                  stroke="#2dd4bf"
+                  strokeWidth={2}
+                  dot={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
           </div>
         </section>
 
@@ -263,8 +279,14 @@ export default function DashboardPage() {
                 <p className="text-[#8b949e] text-sm">
                   {market.seconds_elapsed}s elapsed · {market.seconds_remaining}s left
                 </p>
+                {priceToBeat != null && priceToBeat > 0 && (
+                  <p className="text-sm">
+                    <span className="text-[#8b949e]">Price to beat: </span>
+                    <span className="text-white font-mono font-medium">${priceToBeat.toFixed(2)}</span>
+                  </p>
+                )}
                 <a
-                  href={`https://polymarket.com/${market.slug}`}
+                  href={`https://polymarket.com/event/${market.slug}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 text-[#2dd4bf] hover:underline text-sm"
