@@ -1,16 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { format } from "date-fns";
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  CartesianGrid,
-} from "recharts";
 import {
   TrendingUp,
   Activity,
@@ -23,6 +14,14 @@ import {
   AlertCircle,
   MessageSquare,
 } from "lucide-react";
+import {
+  createChart,
+  LineSeries,
+  type IChartApi,
+  type ISeriesApi,
+  type LineData,
+  type UTCTimestamp,
+} from "lightweight-charts";
 import { fetchState } from "@/lib/api";
 import type { LiveState, TradeRecord, DecisionLogEntry } from "@/lib/types";
 
@@ -38,24 +37,114 @@ function formatDuration(sec: number): string {
   return `${s}s`;
 }
 
-/** Build equity curve starting at starting balance, then trade PnL, then current equity. */
-function buildEquityCurve(
+/** Build chart data with UTCTimestamp (unix seconds) for lightweight-charts. Uses full history. */
+function buildChartData(
   trades: TradeRecord[],
   stateEquity: number,
-  livePnl: number
-): { time: string; equity: number }[] {
+  livePnl: number,
+  updatedAt: string,
+  uptimeSeconds: number
+): LineData[] {
   const startEquity = Math.max(0, stateEquity - livePnl);
-  const points: { time: string; equity: number }[] = [{ time: "Start", equity: startEquity }];
+  const nowSec = Math.floor(Date.now() / 1000);
+  const updatedSec = Math.floor(new Date(updatedAt).getTime() / 1000);
+  const startSec = Math.max(updatedSec - uptimeSeconds, updatedSec - 86400 * 365); // cap to 1 year back if uptime huge
+  const out: LineData[] = [{ time: startSec as UTCTimestamp, value: startEquity }];
   const sorted = [...trades].sort(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
   );
   let running = startEquity;
   for (const t of sorted) {
     running += t.pnl_usdc;
-    points.push({ time: t.timestamp, equity: running });
+    out.push({
+      time: Math.floor(new Date(t.timestamp).getTime() / 1000) as UTCTimestamp,
+      value: running,
+    });
   }
-  points.push({ time: "Now", equity: stateEquity });
-  return points;
+  out.push({ time: nowSec as UTCTimestamp, value: stateEquity });
+  return out;
+}
+
+/** TradingView-style equity chart: scroll (drag) and zoom (mouse wheel). Uses full history. */
+function EquityChart({
+  trades,
+  stateEquity,
+  livePnl,
+  updatedAt,
+  uptimeSeconds,
+}: {
+  trades: TradeRecord[];
+  stateEquity: number;
+  livePnl: number;
+  updatedAt: string;
+  uptimeSeconds: number;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const chart = createChart(containerRef.current, {
+      layout: {
+        background: { color: "#161b22" },
+        textColor: "#8b949e",
+        fontFamily: "inherit",
+      },
+      grid: {
+        vertLines: { color: "#21262d" },
+        horzLines: { color: "#21262d" },
+      },
+      rightPriceScale: {
+        borderColor: "#30363d",
+        scaleMargins: { top: 0.1, bottom: 0.1 },
+      },
+      timeScale: {
+        borderColor: "#30363d",
+        timeVisible: true,
+        secondsVisible: false,
+      },
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+      },
+    });
+    const series = chart.addSeries(LineSeries, {
+      color: "#2dd4bf",
+      lineWidth: 2,
+      priceFormat: { type: "price", precision: 2, minMove: 0.01 },
+    });
+    chartRef.current = chart;
+    seriesRef.current = series as ISeriesApi<"Line">;
+
+    const resize = () => chart.applyOptions({ width: containerRef.current?.offsetWidth ?? 0 });
+    resize();
+    const ro = new ResizeObserver(resize);
+    ro.observe(containerRef.current);
+
+    return () => {
+      ro.disconnect();
+      chart.remove();
+      chartRef.current = null;
+      seriesRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+    const data = buildChartData(
+      trades,
+      stateEquity,
+      livePnl,
+      updatedAt,
+      uptimeSeconds
+    );
+    series.setData(data);
+    chartRef.current?.timeScale().fitContent();
+  }, [trades, stateEquity, livePnl, updatedAt, uptimeSeconds]);
+
+  return <div ref={containerRef} className="w-full h-full min-h-[280px]" />;
 }
 
 export default function DashboardPage() {
@@ -147,12 +236,6 @@ export default function DashboardPage() {
   const losses = trades.filter((t) => t.result === "LOSS").length;
   const totalResolved = wins + losses;
   const winRate = totalResolved > 0 ? (wins / totalResolved) * 100 : 0;
-  const equityCurve = buildEquityCurve(
-    trades,
-    state?.equity ?? 0,
-    state?.livePnl ?? 0
-  );
-
   return (
     <div className="min-h-screen bg-[#0d1117] text-[#e6edf3] font-sans">
       <div className="max-w-6xl mx-auto px-4 py-6 sm:px-6 lg:px-8">
@@ -215,54 +298,23 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* Equity Curve */}
+        {/* Equity Curve — scroll (drag) and zoom (mouse wheel), full history */}
         <section className="rounded-xl bg-[#161b22] border border-[#30363d] p-4 mb-6">
           <h2 className="text-sm font-semibold text-[#8b949e] mb-3 flex items-center gap-2">
             <TrendingUp className="w-4 h-4 text-[#2dd4bf]" />
             Equity Curve
+            <span className="text-xs font-normal text-[#6e7681]">
+              Drag to pan · Scroll to zoom · Full history
+            </span>
           </h2>
-          <div className="h-64 sm:h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={equityCurve} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#30363d" />
-                <XAxis
-                  dataKey="time"
-                  tick={{ fill: "#8b949e", fontSize: 11 }}
-                  tickFormatter={(v) =>
-                    v === "Start" ? "Start" : v === "Now" ? "Now" : format(new Date(v), "HH:mm")
-                  }
-                />
-                <YAxis
-                  tick={{ fill: "#8b949e", fontSize: 11 }}
-                  tickFormatter={(v) => `$${v}`}
-                />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: "#21262d",
-                    border: "1px solid #30363d",
-                    borderRadius: "8px",
-                  }}
-                  labelStyle={{ color: "#e6edf3" }}
-                  formatter={(value: number | undefined) => [`$${(value ?? 0).toFixed(2)}`, "Equity"]}
-                  labelFormatter={(label) =>
-                    label === "Start"
-                      ? "Start"
-                      : label === "Now"
-                        ? "Now"
-                        : label
-                          ? format(new Date(label), "PPp")
-                          : ""
-                  }
-                />
-                <Line
-                  type="monotone"
-                  dataKey="equity"
-                  stroke="#2dd4bf"
-                  strokeWidth={2}
-                  dot={false}
-                />
-              </LineChart>
-            </ResponsiveContainer>
+          <div className="h-64 sm:h-72 min-h-[280px]">
+            <EquityChart
+              trades={trades}
+              stateEquity={state?.equity ?? 0}
+              livePnl={state?.livePnl ?? 0}
+              updatedAt={state?.updatedAt ?? new Date().toISOString()}
+              uptimeSeconds={state?.uptimeSeconds ?? 0}
+            />
           </div>
         </section>
 
