@@ -38,6 +38,8 @@ export interface LiveState {
   chainlinkBtcMove: number | null;
   currentMarket: CurrentMarket | null;
   equity: number;
+  /** Initial equity when bot started. Chart baseline. */
+  initialEquity?: number;
   livePnl: number;
   decisionLog: DecisionLogEntry[];
   tradeEvents: unknown[];

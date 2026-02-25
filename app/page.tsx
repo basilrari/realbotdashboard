@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { format } from "date-fns";
 import {
   TrendingUp,
   Activity,
@@ -28,6 +27,18 @@ import type { LiveState, TradeRecord, DecisionLogEntry } from "@/lib/types";
 const AUTO_BURST_SECONDS = 30;
 const AUTO_BURST_INTERVAL_MS = 1000;
 
+/** Format date/time in UTC (matches Bitcoin market). */
+function formatUtc(date: Date, style: "time" | "datetime"): string {
+  if (style === "time") {
+    return date.toISOString().slice(11, 19);
+  }
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "UTC",
+    dateStyle: "medium",
+    timeStyle: "medium",
+  }).format(date);
+}
+
 function formatDuration(sec: number): string {
   const h = Math.floor(sec / 3600);
   const m = Math.floor((sec % 3600) / 60);
@@ -42,27 +53,40 @@ function buildChartData(
   trades: TradeRecord[],
   stateEquity: number,
   livePnl: number,
+  initialEquity: number | undefined,
   updatedAt: string,
   uptimeSeconds: number
 ): LineData[] {
-  const startEquity = Math.max(0, stateEquity - livePnl);
+  const eq = Number(stateEquity);
+  const pnl = Number(livePnl);
+  const init = initialEquity != null && initialEquity > 0 ? Number(initialEquity) : Math.max(0, eq - pnl);
+  const startEquity = Number.isFinite(init) ? init : 0;
   const nowSec = Math.floor(Date.now() / 1000);
-  const updatedSec = Math.floor(new Date(updatedAt).getTime() / 1000);
-  const startSec = Math.max(updatedSec - uptimeSeconds, updatedSec - 86400 * 365); // cap to 1 year back if uptime huge
+  const updatedSec = Math.floor(new Date(updatedAt || 0).getTime() / 1000);
+  const startSec = Math.max(updatedSec - uptimeSeconds, updatedSec - 86400 * 365);
   const out: LineData[] = [{ time: startSec as UTCTimestamp, value: startEquity }];
   const sorted = [...trades].sort(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
   );
   let running = startEquity;
   for (const t of sorted) {
-    running += t.pnl_usdc;
-    out.push({
-      time: Math.floor(new Date(t.timestamp).getTime() / 1000) as UTCTimestamp,
-      value: running,
-    });
+    const p = Number(t.pnl_usdc);
+    if (!Number.isFinite(p)) continue;
+    running += p;
+    const ts = Math.floor(new Date(t.timestamp).getTime() / 1000);
+    if (!Number.isFinite(running) || !Number.isFinite(ts)) continue;
+    out.push({ time: ts as UTCTimestamp, value: running });
   }
-  out.push({ time: nowSec as UTCTimestamp, value: stateEquity });
-  return out;
+  if (Number.isFinite(eq)) {
+    out.push({ time: nowSec as UTCTimestamp, value: eq });
+  }
+  const valid = out.filter((d) => d != null && Number.isFinite(d.value) && d.time != null);
+  // Dedupe by time (keep last) to avoid lightweight-charts "Value is null"
+  const seen = new Map<number, LineData>();
+  for (const d of valid) {
+    seen.set(d.time as number, d);
+  }
+  return [...seen.entries()].sort((a, b) => a[0] - b[0]).map(([, d]) => d);
 }
 
 /** TradingView-style equity chart: scroll (drag) and zoom (mouse wheel). Uses full history. */
@@ -70,12 +94,14 @@ function EquityChart({
   trades,
   stateEquity,
   livePnl,
+  initialEquity,
   updatedAt,
   uptimeSeconds,
 }: {
   trades: TradeRecord[];
   stateEquity: number;
   livePnl: number;
+  initialEquity?: number;
   updatedAt: string;
   uptimeSeconds: number;
 }) {
@@ -137,12 +163,21 @@ function EquityChart({
       trades,
       stateEquity,
       livePnl,
+      initialEquity,
       updatedAt,
       uptimeSeconds
     );
-    series.setData(data);
+    if (data.length < 2) {
+      const fallback = [
+        { time: Math.floor(Date.now() / 1000) as UTCTimestamp, value: stateEquity || 0 },
+        { time: (Math.floor(Date.now() / 1000) + 1) as UTCTimestamp, value: stateEquity || 0 },
+      ];
+      series.setData(fallback);
+    } else {
+      series.setData(data);
+    }
     chartRef.current?.timeScale().fitContent();
-  }, [trades, stateEquity, livePnl, updatedAt, uptimeSeconds]);
+  }, [trades, stateEquity, livePnl, initialEquity, updatedAt, uptimeSeconds]);
 
   return <div ref={containerRef} className="w-full h-full min-h-[280px]" />;
 }
@@ -234,7 +269,9 @@ export default function DashboardPage() {
   const displayTrades = [...trades].reverse(); // show newest first, all trades
   const wins = trades.filter((t) => t.result === "WIN").length;
   const losses = trades.filter((t) => t.result === "LOSS").length;
-  const totalResolved = wins + losses;
+  const timeouts = trades.filter((t) => t.result === "TIMEOUT").length;
+  const totalResolved = wins + losses + timeouts;
+  const livePnlFromTrades = trades.reduce((sum, t) => sum + (t.pnl_usdc ?? 0), 0);
   const winRate = totalResolved > 0 ? (wins / totalResolved) * 100 : 0;
   return (
     <div className="min-h-screen bg-[#0d1117] text-[#e6edf3] font-sans">
@@ -248,7 +285,7 @@ export default function DashboardPage() {
           <div className="flex items-center gap-3 text-sm text-[#8b949e]">
             <span className="flex items-center gap-1">
               <RefreshCw className={`w-4 h-4 ${isAutoBurst ? "animate-spin" : ""}`} />
-              Updated {lastUpdated ? format(lastUpdated, "HH:mm:ss") : "—"}
+              Updated {lastUpdated ? formatUtc(lastUpdated, "time") : "—"}
             </span>
             <button
               type="button"
@@ -283,26 +320,35 @@ export default function DashboardPage() {
             <p className="text-[#8b949e] text-sm mb-1">Live PnL</p>
             <p
               className={`text-3xl font-bold ${
-                (state?.livePnl ?? 0) >= 0 ? "text-[#2dd4bf]" : "text-[#f87171]"
+                livePnlFromTrades >= 0 ? "text-[#2dd4bf]" : "text-[#f87171]"
               }`}
             >
-              {(state?.livePnl ?? 0) >= 0 ? "+" : ""}
-              ${(state?.livePnl ?? 0).toFixed(2)}
+              {livePnlFromTrades >= 0 ? "+" : ""}
+              ${livePnlFromTrades.toFixed(2)}
             </p>
+            <p className="text-xs text-[#6e7681] mt-0.5">Sum of all trade PnL</p>
           </div>
           <div className="rounded-xl bg-[#161b22] border border-[#30363d] p-5">
             <p className="text-[#8b949e] text-sm mb-1">Win rate · Trades</p>
             <p className="text-2xl font-bold text-white">
               {winRate.toFixed(0)}% <span className="text-[#8b949e] font-normal">· {trades.length}</span>
             </p>
+            <p className="text-xs text-[#6e7681] mt-0.5">
+              {wins}/{totalResolved} resolved
+            </p>
           </div>
         </section>
 
         {/* Equity Curve — scroll (drag) and zoom (mouse wheel), full history */}
         <section className="rounded-xl bg-[#161b22] border border-[#30363d] p-4 mb-6">
-          <h2 className="text-sm font-semibold text-[#8b949e] mb-3 flex items-center gap-2">
+          <h2 className="text-sm font-semibold text-[#8b949e] mb-3 flex flex-wrap items-center gap-2">
             <TrendingUp className="w-4 h-4 text-[#2dd4bf]" />
             Equity Curve
+            {state?.initialEquity != null && state.initialEquity > 0 && (
+              <span className="text-xs font-mono text-[#6e7681]">
+                Starting: ${state.initialEquity.toFixed(2)}
+              </span>
+            )}
             <span className="text-xs font-normal text-[#6e7681]">
               Drag to pan · Scroll to zoom · Full history
             </span>
@@ -312,6 +358,7 @@ export default function DashboardPage() {
               trades={trades}
               stateEquity={state?.equity ?? 0}
               livePnl={state?.livePnl ?? 0}
+              initialEquity={state?.initialEquity}
               updatedAt={state?.updatedAt ?? new Date().toISOString()}
               uptimeSeconds={state?.uptimeSeconds ?? 0}
             />
@@ -319,7 +366,7 @@ export default function DashboardPage() {
         </section>
 
         {/* Current Market + Live prices */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 mb-6">
           <section className="rounded-xl bg-[#161b22] border border-[#30363d] p-4">
             <h2 className="text-sm font-semibold text-[#8b949e] mb-3 flex items-center gap-2">
               <Activity className="w-4 h-4 text-[#2dd4bf]" />
@@ -353,7 +400,7 @@ export default function DashboardPage() {
 
           <section className="rounded-xl bg-[#161b22] border border-[#30363d] p-4">
             <h2 className="text-sm font-semibold text-[#8b949e] mb-3">Live prices</h2>
-            <div className="grid grid-cols-2 gap-3 text-sm">
+            <div className="grid grid-cols-2 sm:grid-cols-2 gap-3 sm:gap-4 text-sm min-w-0">
               <PriceRow label="YES" value={state?.yesPrice} priceToBeat={priceToBeat} />
               <PriceRow label="NO" value={state?.noPrice} priceToBeat={priceToBeat} />
               <PriceRow
@@ -391,47 +438,72 @@ export default function DashboardPage() {
           )}
         </section>
 
-        {/* Decision log (why took / skipped / error) */}
+        {/* Decision log (Take / Skip / Error) */}
         <section className="rounded-xl bg-[#161b22] border border-[#30363d] overflow-hidden mb-6">
           <h2 className="text-sm font-semibold text-[#8b949e] p-4 pb-2 flex items-center gap-2">
             <MessageSquare className="w-4 h-4 text-[#2dd4bf]" />
-            Decision log (take / skip / error)
+            Decision log
           </h2>
-          <div className="px-4 pb-4 max-h-64 overflow-y-auto">
+          <div className="px-4 pb-4 max-h-80 overflow-y-auto">
             {(() => {
               const raw = state?.decisionLog;
               const entries = (Array.isArray(raw) ? raw : []).filter(
                 (e): e is DecisionLogEntry =>
                   e != null && typeof e === "object" && "kind" in e && "reason" in e
               );
-              const list = [...entries].reverse();
-              if (list.length === 0) {
+              const takes = entries.filter((e) => e.kind === "take");
+              const skips = entries.filter((e) => e.kind === "skip");
+              const errors = entries.filter((e) => e.kind === "error");
+              const total = takes.length + skips.length + errors.length;
+              if (total === 0) {
                 return (
                   <p className="text-[#6e7681] text-sm py-2">No decisions yet this session.</p>
                 );
               }
+              const EntryList = ({ items, title }: { items: DecisionLogEntry[]; title: string }) => {
+                if (items.length === 0) return null;
+                const list = [...items].reverse();
+                return (
+                  <div className="mb-4 last:mb-0">
+                    <h3 className="text-xs font-medium text-[#6e7681] uppercase tracking-wider mb-2">
+                      {title} ({items.length})
+                    </h3>
+                    <ul className="space-y-1.5 text-sm">
+                      {list.map((e, i) => (
+                        <li
+                          key={`${e.ts}-${i}`}
+                          className="flex flex-wrap items-baseline gap-2 py-1.5 border-b border-[#21262d] last:border-0"
+                        >
+                          <span className="text-[#6e7681] shrink-0">
+                            {formatUtc(new Date(e.ts), "time")}
+                          </span>
+                          <DecisionKindBadge kind={e.kind} />
+                          <span className="text-[#e6edf3]">{e.reason}</span>
+                          {e.side != null && (
+                            <span className="text-[#8b949e] font-mono text-xs">
+                              {e.side}
+                              {e.price != null && ` @ ${e.price.toFixed(2)}`}
+                              {e.size_usdc != null && ` · $${e.size_usdc.toFixed(2)}`}
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              };
               return (
-                <ul className="space-y-2 text-sm">
-                  {list.map((e, i) => (
-                    <li
-                      key={i}
-                      className="flex flex-wrap items-baseline gap-2 py-1.5 border-b border-[#21262d] last:border-0"
-                    >
-                      <span className="text-[#6e7681] shrink-0">
-                        {format(new Date(e.ts), "HH:mm:ss")}
-                      </span>
-                      <DecisionKindBadge kind={e.kind} />
-                      <span className="text-[#e6edf3]">{e.reason}</span>
-                      {e.side != null && (
-                        <span className="text-[#8b949e] font-mono text-xs">
-                          {e.side}
-                          {e.price != null && ` @ ${e.price.toFixed(2)}`}
-                          {e.size_usdc != null && ` · $${e.size_usdc.toFixed(2)}`}
-                        </span>
-                      )}
-                    </li>
-                  ))}
-                </ul>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="min-w-0">
+                    <EntryList items={takes} title="Take" />
+                  </div>
+                  <div className="min-w-0">
+                    <EntryList items={skips} title="Skip" />
+                  </div>
+                  <div className="min-w-0">
+                    <EntryList items={errors} title="Error" />
+                  </div>
+                </div>
               );
             })()}
           </div>
@@ -464,7 +536,7 @@ export default function DashboardPage() {
                   displayTrades.map((t, i) => (
                     <tr key={i} className="border-b border-[#21262d] hover:bg-[#21262d]/50">
                       <td className="py-2 px-4 text-[#e6edf3] whitespace-nowrap">
-                        {format(new Date(t.timestamp), "HH:mm:ss")}
+                        {formatUtc(new Date(t.timestamp), "time")}
                       </td>
                       <td className="py-2 px-4 font-mono">{t.side}</td>
                       <td className="py-2 px-4 text-right">${t.entry_price.toFixed(2)}</td>
@@ -491,7 +563,7 @@ export default function DashboardPage() {
         </section>
 
         <p className="text-center text-[#6e7681] text-xs">
-          Auto-refresh in bursts (1s × 30s) · Last updated {lastUpdated ? format(lastUpdated, "PPp") : "—"}
+          Auto-refresh in bursts (1s × 30s) · Last updated {lastUpdated ? formatUtc(lastUpdated, "datetime") : "—"}
         </p>
       </div>
     </div>
@@ -513,12 +585,12 @@ function PriceRow({
   const beat = priceToBeat ?? 0;
   const diff = isBtc && beat ? num - beat : 0;
   return (
-    <div className="flex justify-between items-center py-1">
-      <span className="text-[#8b949e]">{label}</span>
-      <span className="text-white font-mono">
+    <div className="flex justify-between items-center py-1.5 sm:py-2 gap-2 min-w-0">
+      <span className="text-[#8b949e] shrink-0">{label}</span>
+      <span className="text-white font-mono text-right truncate">
         {isBtc ? `$${num.toFixed(2)}` : num.toFixed(4)}
         {isBtc && beat !== 0 && (
-          <span className={diff >= 0 ? "text-[#2dd4bf] ml-1" : "text-[#f87171] ml-1"}>
+          <span className={`ml-1 shrink-0 ${diff >= 0 ? "text-[#2dd4bf]" : "text-[#f87171]"}`}>
             ({diff >= 0 ? "+" : ""}${diff.toFixed(2)})
           </span>
         )}
