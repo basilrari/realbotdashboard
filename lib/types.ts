@@ -61,6 +61,8 @@ export interface LiveState {
   dailyLossLimit?: number;
   /** Equity at start of current UTC day. */
   startOfDayEquity?: number;
+  /** CLOB USDC spending approval (allowance); refreshed hourly. */
+  clobSpendingApprovalUsdc?: number;
   livePnl: number;
   decisionLog: DecisionLogEntry[];
   tradeEvents: unknown[];
@@ -81,6 +83,8 @@ export interface LiveState {
   largestMarketLossUsdc?: number;
   largestMarketLossSlug?: string | null;
   tradeWinRatePct?: number;
+  resolvedWinCount?: number;
+  resolvedLossCount?: number;
   totalVolumeUsdc?: number;
   currentExposureUsdc?: number;
   totalRedeemedUsdc?: number;
@@ -96,6 +100,8 @@ export interface LiveState {
   dailyPnl?: DailyPnlPoint[];
   weeklyPnl?: WeeklyPnlPoint[];
   pnlCurve?: PnlCurvePoint[];
+  /** Recent closed positions from Data API (TradeRecord-compatible). */
+  analyticsTrades?: TradeRecord[];
 }
 
 /** One entry in the bot decision log (take / skip / error). */

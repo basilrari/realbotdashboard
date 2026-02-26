@@ -284,15 +284,16 @@ export default function DashboardPage() {
 
   const market = state?.currentMarket ?? null;
   const priceToBeat = state?.priceToBeat ?? null;
-  const trades = state?.trades ?? [];
+  const localTrades = state?.trades ?? [];
+  const analyticsTrades = state?.analyticsTrades ?? [];
+  const trades = localTrades.length > 0 ? localTrades : analyticsTrades;
   const displayTrades = [...trades].sort(
     (a, b) => parseTimestamp(b.timestamp).getTime() - parseTimestamp(a.timestamp).getTime()
   );
-  const wins = trades.filter((t) => t.result === "WIN").length;
-  const losses = trades.filter((t) => t.result === "LOSS").length;
-  const timeouts = trades.filter((t) => t.result === "TIMEOUT").length;
-  const totalResolved = wins + losses + timeouts;
-  const livePnlFromTrades = trades.reduce((sum, t) => sum + (t.pnl_usdc ?? 0), 0);
+  const wins = state?.resolvedWinCount ?? localTrades.filter((t) => t.result === "WIN").length;
+  const losses = state?.resolvedLossCount ?? localTrades.filter((t) => t.result === "LOSS").length;
+  const totalResolved = wins + losses;
+  const livePnlFromTrades = localTrades.reduce((sum, t) => sum + (t.pnl_usdc ?? 0), 0);
   const winRate = totalResolved > 0 ? (wins / totalResolved) * 100 : 0;
   const analyticsWinRate = state?.tradeWinRatePct ?? winRate;
 
@@ -301,6 +302,13 @@ export default function DashboardPage() {
 
   const fmtSecs = (v: number | undefined | null) =>
     v == null ? "—" : formatDuration(v);
+
+  const fmtHoldingTime = (avg: number | undefined | null, max: number | undefined | null) => {
+    const a = avg ?? 0;
+    const m = max ?? 0;
+    if (a === 0 && m === 0) return "—";
+    return `${formatDuration(a)} avg · ${formatDuration(m)} max`;
+  };
 
   const startOfDayEquity =
     state?.startOfDayEquity ?? state?.initialEquity ?? state?.equity ?? 0;
@@ -363,13 +371,13 @@ export default function DashboardPage() {
             <p className="text-xs text-[#6e7681] mt-0.5">Sum of all trade PnL</p>
           </div>
           <div className="rounded-xl bg-[#161b22] border border-[#30363d] p-5 transition-transform duration-200 hover:-translate-y-0.5">
-            <p className="text-[#8b949e] text-sm mb-1">Win rate · Trades</p>
+            <p className="text-[#8b949e] text-sm mb-1">Win rate · Resolved</p>
             <p className="text-2xl font-bold text-white">
               {analyticsWinRate.toFixed(0)}%{" "}
-              <span className="text-[#8b949e] font-normal">· {trades.length}</span>
+              <span className="text-[#8b949e] font-normal">· {totalResolved} markets</span>
             </p>
             <p className="text-xs text-[#6e7681] mt-0.5">
-              {wins}/{totalResolved} resolved
+              {wins} wins · {losses} losses
             </p>
           </div>
         </section>
@@ -404,13 +412,13 @@ export default function DashboardPage() {
               Positions & Trades
             </h2>
             <div className="grid grid-cols-2 gap-3 text-sm">
-              <Stat label="Total trades" value={String(state?.totalTrades ?? trades.length)} />
+              <Stat label="Trade executions" value={String(state?.totalTrades ?? 0)} title="Individual buy/sell events from API" />
               <Stat label="Open positions" value={String(state?.openPositions ?? 0)} />
               <Stat
                 label="Redeemable"
                 value={String(state?.redeemablePositions ?? 0)}
               />
-              <Stat label="Closed" value={String(state?.closedPositions ?? 0)} />
+              <Stat label="Closed markets" value={String(state?.closedPositions ?? 0)} title="Markets fully closed or redeemed" />
               <Stat
                 label="Trades / day"
                 value={(state?.tradesPerDay ?? 0).toFixed(2)}
@@ -436,6 +444,12 @@ export default function DashboardPage() {
                   {fmtUsd(maxDailyLoss)}
                 </span>
               </div>
+              <div className="flex justify-between" title="USDC allowance for CLOB; refreshed hourly">
+                <span>CLOB spending approval</span>
+                <span className="text-white font-mono">
+                  {fmtUsd(state?.clobSpendingApprovalUsdc)}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -446,24 +460,24 @@ export default function DashboardPage() {
             </h2>
             <div className="space-y-2 text-sm">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-[#8b949e] flex items-center gap-1">
+                <span className="text-[#8b949e] flex items-center gap-1 shrink-0">
                   <ArrowUpRight className="w-3 h-3 text-[#2dd4bf]" /> Best
                 </span>
-                <span className="text-right text-white font-mono truncate">
+                <span className="text-right text-white font-mono truncate min-w-0" title={state?.largestMarketProfitSlug ?? undefined}>
                   {state?.largestMarketProfitSlug ?? "—"}
                 </span>
-                <span className="text-right text-[#2dd4bf] font-mono">
+                <span className="text-right text-[#2dd4bf] font-mono shrink-0">
                   {fmtUsd(state?.largestMarketProfitUsdc ?? 0)}
                 </span>
               </div>
               <div className="flex items-center justify-between gap-2">
-                <span className="text-[#8b949e] flex items-center gap-1">
+                <span className="text-[#8b949e] flex items-center gap-1 shrink-0">
                   <ArrowDownRight className="w-3 h-3 text-[#f87171]" /> Worst
                 </span>
-                <span className="text-right text-white font-mono truncate">
+                <span className="text-right text-white font-mono truncate min-w-0" title={state?.largestMarketLossSlug ?? undefined}>
                   {state?.largestMarketLossSlug ?? "—"}
                 </span>
-                <span className="text-right text-[#f87171] font-mono">
+                <span className="text-right text-[#f87171] font-mono shrink-0">
                   {fmtUsd(state?.largestMarketLossUsdc ?? 0)}
                 </span>
               </div>
@@ -512,15 +526,9 @@ export default function DashboardPage() {
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-[#8b949e]">Avg holding time</span>
-                <span className="text-white font-mono">
-                  {fmtSecs(state?.avgHoldingTimeSecs)}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-[#8b949e]">Max holding time</span>
-                <span className="text-white font-mono">
-                  {fmtSecs(state?.maxHoldingTimeSecs)}
+                <span className="text-[#8b949e]">Holding time</span>
+                <span className="text-white font-mono text-right">
+                  {fmtHoldingTime(state?.avgHoldingTimeSecs, state?.maxHoldingTimeSecs)}
                 </span>
               </div>
             </div>
@@ -545,7 +553,11 @@ export default function DashboardPage() {
             <EquityChart
               trades={trades}
               stateEquity={state?.equity ?? 0}
-              livePnl={state?.livePnl ?? 0}
+              livePnl={
+                localTrades.length > 0
+                  ? (state?.livePnl ?? 0)
+                  : (state?.totalRealizedPnlUsdc ?? state?.livePnl ?? 0)
+              }
               initialEquity={state?.initialEquity}
               updatedAt={state?.updatedAt ?? new Date().toISOString()}
               uptimeSeconds={state?.uptimeSeconds ?? 0}
@@ -669,12 +681,15 @@ export default function DashboardPage() {
 
         {/* Trades */}
         <section className="rounded-xl bg-[#161b22] border border-[#30363d] overflow-hidden mb-6">
-          <h2 className="text-sm font-semibold text-[#8b949e] p-4 pb-0">All Trades (newest first, UTC)</h2>
+          <h2 className="text-sm font-semibold text-[#8b949e] p-4 pb-0">
+            {localTrades.length > 0 ? "Bot trades" : "Closed markets (from API)"} — newest first, UTC
+          </h2>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-[#8b949e] border-b border-[#30363d]">
                   <th className="text-left py-3 px-4">Date & Time (UTC)</th>
+                  <th className="text-left py-3 px-4">Market</th>
                   <th className="text-left py-3 px-4">Side</th>
                   <th className="text-right py-3 px-4">Entry</th>
                   <th className="text-right py-3 px-4">Size</th>
@@ -687,7 +702,7 @@ export default function DashboardPage() {
               <tbody>
                 {displayTrades.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="py-8 text-center text-[#6e7681]">
+                    <td colSpan={9} className="py-8 text-center text-[#6e7681]">
                       No trades yet.
                     </td>
                   </tr>
@@ -696,6 +711,9 @@ export default function DashboardPage() {
                     <tr key={i} className="border-b border-[#21262d] hover:bg-[#21262d]/50">
                       <td className="py-2 px-4 text-[#e6edf3] whitespace-nowrap" title={formatUtc(parseTimestamp(t.timestamp), "datetime")}>
                         {formatUtc(parseTimestamp(t.timestamp), "datetime")}
+                      </td>
+                      <td className="py-2 px-4 font-mono text-sm truncate max-w-[140px]" title={t.slug}>
+                        {t.slug}
                       </td>
                       <td className="py-2 px-4 font-mono">{t.side}</td>
                       <td className="py-2 px-4 text-right">${t.entry_price.toFixed(2)}</td>
@@ -773,9 +791,9 @@ function PriceRow({
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
-    <div>
+    <div title={title}>
       <span className="text-[#8b949e]">{label}: </span>
       <span className="text-white font-mono">{value}</span>
     </div>
