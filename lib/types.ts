@@ -17,6 +17,23 @@ export interface TradeRecord {
   pnl_usdc: number;
   reason: string;
   resolved_at?: string | null;
+   // Whether on-chain redemption/collection has succeeded for this market.
+  redeemed?: boolean;
+}
+
+export interface DailyPnlPoint {
+  date: string;
+  pnl: number;
+}
+
+export interface WeeklyPnlPoint {
+  weekStart: string;
+  pnl: number;
+}
+
+export interface PnlCurvePoint {
+  ts: string;
+  pnl: number;
 }
 
 export interface LiveState {
@@ -45,6 +62,36 @@ export interface LiveState {
   tradeEvents: unknown[];
   deferredResolutions: unknown[];
   trades: TradeRecord[];
+  // Analytics from backend (all optional for backwards compatibility)
+  totalTrades?: number;
+  openPositions?: number;
+  redeemablePositions?: number;
+  closedPositions?: number;
+  totalInvestedUsdc?: number;
+  totalRealizedPnlUsdc?: number;
+  totalUnrealizedPnlUsdc?: number;
+  totalProfitUsdc?: number;
+  totalLossUsdc?: number;
+  largestMarketProfitUsdc?: number;
+  largestMarketProfitSlug?: string | null;
+  largestMarketLossUsdc?: number;
+  largestMarketLossSlug?: string | null;
+  tradeWinRatePct?: number;
+  totalVolumeUsdc?: number;
+  currentExposureUsdc?: number;
+  totalRedeemedUsdc?: number;
+  unredeemedValueUsdc?: number;
+  avgRedemptionLagSecs?: number;
+  maxRedemptionLagSecs?: number;
+  longestWinStreakTrades?: number;
+  longestLossStreakTrades?: number;
+  avgHoldingTimeSecs?: number;
+  maxHoldingTimeSecs?: number;
+  tradesPerDay?: number;
+  tradesPerWeek?: number;
+  dailyPnl?: DailyPnlPoint[];
+  weeklyPnl?: WeeklyPnlPoint[];
+  pnlCurve?: PnlCurvePoint[];
 }
 
 /** One entry in the bot decision log (take / skip / error). */

@@ -12,6 +12,9 @@ import {
   RefreshCw,
   AlertCircle,
   MessageSquare,
+  PieChart,
+  ArrowUpRight,
+  ArrowDownRight,
 } from "lucide-react";
 import {
   createChart,
@@ -201,8 +204,10 @@ export default function DashboardPage() {
 
   // Initial fetch and start 1s burst for 30s on mount
   useEffect(() => {
-    load();
-    setIsAutoBurst(true);
+    void (async () => {
+      await load();
+      setIsAutoBurst(true);
+    })();
   }, [load]);
 
   // Auto-burst: refresh every second for AUTO_BURST_SECONDS, then pause
@@ -273,6 +278,13 @@ export default function DashboardPage() {
   const totalResolved = wins + losses + timeouts;
   const livePnlFromTrades = trades.reduce((sum, t) => sum + (t.pnl_usdc ?? 0), 0);
   const winRate = totalResolved > 0 ? (wins / totalResolved) * 100 : 0;
+  const analyticsWinRate = state?.tradeWinRatePct ?? winRate;
+
+  const fmtUsd = (v: number | undefined | null, digits = 2) =>
+    v == null ? "—" : `$${v.toFixed(digits)}`;
+
+  const fmtSecs = (v: number | undefined | null) =>
+    v == null ? "—" : formatDuration(v);
   return (
     <div className="min-h-screen bg-[#0d1117] text-[#e6edf3] font-sans">
       <div className="max-w-6xl mx-auto px-4 py-6 sm:px-6 lg:px-8">
@@ -310,13 +322,13 @@ export default function DashboardPage() {
 
         {/* Live Equity + PnL */}
         <section className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-          <div className="rounded-xl bg-[#161b22] border border-[#30363d] p-5">
+          <div className="rounded-xl bg-[#161b22] border border-[#30363d] p-5 transition-transform duration-200 hover:-translate-y-0.5">
             <p className="text-[#8b949e] text-sm mb-1">Live Equity</p>
             <p className="text-3xl font-bold text-white">
               ${(state?.equity ?? 0).toFixed(2)}
             </p>
           </div>
-          <div className="rounded-xl bg-[#161b22] border border-[#30363d] p-5">
+          <div className="rounded-xl bg-[#161b22] border border-[#30363d] p-5 transition-transform duration-200 hover:-translate-y-0.5">
             <p className="text-[#8b949e] text-sm mb-1">Live PnL</p>
             <p
               className={`text-3xl font-bold ${
@@ -328,14 +340,151 @@ export default function DashboardPage() {
             </p>
             <p className="text-xs text-[#6e7681] mt-0.5">Sum of all trade PnL</p>
           </div>
-          <div className="rounded-xl bg-[#161b22] border border-[#30363d] p-5">
+          <div className="rounded-xl bg-[#161b22] border border-[#30363d] p-5 transition-transform duration-200 hover:-translate-y-0.5">
             <p className="text-[#8b949e] text-sm mb-1">Win rate · Trades</p>
             <p className="text-2xl font-bold text-white">
-              {winRate.toFixed(0)}% <span className="text-[#8b949e] font-normal">· {trades.length}</span>
+              {analyticsWinRate.toFixed(0)}%{" "}
+              <span className="text-[#8b949e] font-normal">· {trades.length}</span>
             </p>
             <p className="text-xs text-[#6e7681] mt-0.5">
               {wins}/{totalResolved} resolved
             </p>
+          </div>
+        </section>
+
+        {/* Analytics overview */}
+        <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <AnalyticsCard
+            label="Total PnL (realized)"
+            value={fmtUsd(state?.totalRealizedPnlUsdc ?? state?.livePnl ?? 0)}
+            trend={state?.totalRealizedPnlUsdc ?? state?.livePnl ?? 0}
+          />
+          <AnalyticsCard
+            label="Unrealized PnL"
+            value={fmtUsd(state?.totalUnrealizedPnlUsdc ?? 0)}
+            trend={state?.totalUnrealizedPnlUsdc ?? 0}
+          />
+          <AnalyticsCard
+            label="Total Volume"
+            value={fmtUsd(state?.totalVolumeUsdc ?? 0, 0)}
+          />
+          <AnalyticsCard
+            label="Current Exposure"
+            value={fmtUsd(state?.currentExposureUsdc ?? 0)}
+          />
+        </section>
+
+        {/* Positions / trades / streaks */}
+        <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+          <div className="rounded-xl bg-[#161b22] border border-[#30363d] p-4">
+            <h2 className="text-sm font-semibold text-[#8b949e] mb-3 flex items-center gap-2">
+              <PieChart className="w-4 h-4 text-[#2dd4bf]" />
+              Positions & Trades
+            </h2>
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <Stat label="Total trades" value={String(state?.totalTrades ?? trades.length)} />
+              <Stat label="Open positions" value={String(state?.openPositions ?? 0)} />
+              <Stat
+                label="Redeemable"
+                value={String(state?.redeemablePositions ?? 0)}
+              />
+              <Stat label="Closed" value={String(state?.closedPositions ?? 0)} />
+              <Stat
+                label="Trades / day"
+                value={(state?.tradesPerDay ?? 0).toFixed(2)}
+              />
+              <Stat
+                label="Trades / week"
+                value={(state?.tradesPerWeek ?? 0).toFixed(2)}
+              />
+            </div>
+          </div>
+
+          <div className="rounded-xl bg-[#161b22] border border-[#30363d] p-4">
+            <h2 className="text-sm font-semibold text-[#8b949e] mb-3 flex items-center gap-2">
+              <TrendingUp className="w-4 h-4 text-[#2dd4bf]" />
+              Best & Worst Markets
+            </h2>
+            <div className="space-y-2 text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[#8b949e] flex items-center gap-1">
+                  <ArrowUpRight className="w-3 h-3 text-[#2dd4bf]" /> Best
+                </span>
+                <span className="text-right text-white font-mono truncate">
+                  {state?.largestMarketProfitSlug ?? "—"}
+                </span>
+                <span className="text-right text-[#2dd4bf] font-mono">
+                  {fmtUsd(state?.largestMarketProfitUsdc ?? 0)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[#8b949e] flex items-center gap-1">
+                  <ArrowDownRight className="w-3 h-3 text-[#f87171]" /> Worst
+                </span>
+                <span className="text-right text-white font-mono truncate">
+                  {state?.largestMarketLossSlug ?? "—"}
+                </span>
+                <span className="text-right text-[#f87171] font-mono">
+                  {fmtUsd(state?.largestMarketLossUsdc ?? 0)}
+                </span>
+              </div>
+              <div className="mt-2 text-xs text-[#6e7681]">
+                Longest win streak:{" "}
+                <span className="text-white font-mono">
+                  {state?.longestWinStreakTrades ?? 0}
+                </span>{" "}
+                trades · Longest loss streak:{" "}
+                <span className="text-white font-mono">
+                  {state?.longestLossStreakTrades ?? 0}
+                </span>{" "}
+                trades
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-xl bg-[#161b22] border border-[#30363d] p-4">
+            <h2 className="text-sm font-semibold text-[#8b949e] mb-3 flex items-center gap-2">
+              <Activity className="w-4 h-4 text-[#2dd4bf]" />
+              Redemption & Flow
+            </h2>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-[#8b949e]">Total redeemed</span>
+                <span className="text-white font-mono">
+                  {fmtUsd(state?.totalRedeemedUsdc ?? 0, 2)}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-[#8b949e]">Unredeemed value</span>
+                <span className="text-white font-mono">
+                  {fmtUsd(state?.unredeemedValueUsdc ?? 0, 2)}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-[#8b949e]">Avg redemption lag</span>
+                <span className="text-white font-mono">
+                  {fmtSecs(state?.avgRedemptionLagSecs)}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-[#8b949e]">Max redemption lag</span>
+                <span className="text-white font-mono">
+                  {fmtSecs(state?.maxRedemptionLagSecs)}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-[#8b949e]">Avg holding time</span>
+                <span className="text-white font-mono">
+                  {fmtSecs(state?.avgHoldingTimeSecs)}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-[#8b949e]">Max holding time</span>
+                <span className="text-white font-mono">
+                  {fmtSecs(state?.maxHoldingTimeSecs)}
+                </span>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -460,48 +609,16 @@ export default function DashboardPage() {
                   <p className="text-[#6e7681] text-sm py-2">No decisions yet this session.</p>
                 );
               }
-              const EntryList = ({ items, title }: { items: DecisionLogEntry[]; title: string }) => {
-                if (items.length === 0) return null;
-                const list = [...items].reverse();
-                return (
-                  <div className="mb-4 last:mb-0">
-                    <h3 className="text-xs font-medium text-[#6e7681] uppercase tracking-wider mb-2">
-                      {title} ({items.length})
-                    </h3>
-                    <ul className="space-y-1.5 text-sm">
-                      {list.map((e, i) => (
-                        <li
-                          key={`${e.ts}-${i}`}
-                          className="flex flex-wrap items-baseline gap-2 py-1.5 border-b border-[#21262d] last:border-0"
-                        >
-                          <span className="text-[#6e7681] shrink-0">
-                            {formatUtc(new Date(e.ts), "time")}
-                          </span>
-                          <DecisionKindBadge kind={e.kind} />
-                          <span className="text-[#e6edf3]">{e.reason}</span>
-                          {e.side != null && (
-                            <span className="text-[#8b949e] font-mono text-xs">
-                              {e.side}
-                              {e.price != null && ` @ ${e.price.toFixed(2)}`}
-                              {e.size_usdc != null && ` · $${e.size_usdc.toFixed(2)}`}
-                            </span>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                );
-              };
               return (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="min-w-0">
-                    <EntryList items={takes} title="Take" />
+                    <DecisionEntryList items={takes} title="Take" />
                   </div>
                   <div className="min-w-0">
-                    <EntryList items={skips} title="Skip" />
+                    <DecisionEntryList items={skips} title="Skip" />
                   </div>
                   <div className="min-w-0">
-                    <EntryList items={errors} title="Error" />
+                    <DecisionEntryList items={errors} title="Error" />
                   </div>
                 </div>
               );
@@ -521,6 +638,7 @@ export default function DashboardPage() {
                   <th className="text-right py-3 px-4">Entry</th>
                   <th className="text-right py-3 px-4">Size</th>
                   <th className="text-left py-3 px-4">Result</th>
+                  <th className="text-left py-3 px-4">Collected</th>
                   <th className="text-right py-3 px-4">PnL</th>
                   <th className="text-left py-3 px-4 max-w-[120px] truncate">Reason</th>
                 </tr>
@@ -543,6 +661,21 @@ export default function DashboardPage() {
                       <td className="py-2 px-4 text-right">${t.size_usdc.toFixed(2)}</td>
                       <td className="py-2 px-4">
                         <ResultBadge result={t.result} />
+                      </td>
+                      <td className="py-2 px-4">
+                        {t.redeemed ? (
+                          <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-[#2dd4bf]/20 text-[#2dd4bf]">
+                            Collected
+                          </span>
+                        ) : t.result === "PENDING" ? (
+                          <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-[#6e7681]/20 text-[#8b949e]">
+                            Pending
+                          </span>
+                        ) : (
+                          <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-[#6e7681]/20 text-[#8b949e]">
+                            Not collected
+                          </span>
+                        )}
                       </td>
                       <td
                         className={`py-2 px-4 text-right font-medium ${
@@ -633,5 +766,71 @@ function DecisionKindBadge({ kind }: { kind: "take" | "skip" | "error" }) {
     <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium shrink-0 ${style}`}>
       {kind.toUpperCase()}
     </span>
+  );
+}
+
+function AnalyticsCard({
+  label,
+  value,
+  trend,
+}: {
+  label: string;
+  value: string;
+  trend?: number;
+}) {
+  const isPositive = trend != null && trend >= 0;
+  const trendIcon =
+    trend == null ? null : isPositive ? (
+      <ArrowUpRight className="w-3 h-3 text-[#2dd4bf]" />
+    ) : (
+      <ArrowDownRight className="w-3 h-3 text-[#f87171]" />
+    );
+  return (
+    <div className="rounded-xl bg-[#161b22] border border-[#30363d] p-4 transition-transform duration-200 hover:-translate-y-0.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs text-[#8b949e]">{label}</span>
+        {trendIcon}
+      </div>
+      <p className="mt-2 text-xl font-semibold text-white">{value}</p>
+    </div>
+  );
+}
+
+function DecisionEntryList({
+  items,
+  title,
+}: {
+  items: DecisionLogEntry[];
+  title: string;
+}) {
+  if (items.length === 0) return null;
+  const list = [...items].reverse();
+  return (
+    <div className="mb-4 last:mb-0">
+      <h3 className="text-xs font-medium text-[#6e7681] uppercase tracking-wider mb-2">
+        {title} ({items.length})
+      </h3>
+      <ul className="space-y-1.5 text-sm">
+        {list.map((e, i) => (
+          <li
+            key={`${e.ts}-${i}`}
+            className="flex flex-wrap items-baseline gap-2 py-1.5 border-b border-[#21262d] last:border-0"
+          >
+            <span className="text-[#6e7681] shrink-0">
+              {formatUtc(new Date(e.ts), "time")}
+            </span>
+            <DecisionKindBadge kind={e.kind} />
+            <span className="text-[#e6edf3]">{e.reason}</span>
+            {e.side != null && (
+              <span className="text-[#8b949e] font-mono text-xs">
+                {e.side}
+                {e.price != null && ` @ ${e.price.toFixed(2)}`}
+                {e.size_usdc != null && ` · $${e.size_usdc.toFixed(2)}`}
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
