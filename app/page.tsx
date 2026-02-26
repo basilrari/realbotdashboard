@@ -204,6 +204,7 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [isAutoBurst, setIsAutoBurst] = useState<boolean>(false);
+  const [tradesPage, setTradesPage] = useState(0);
 
   const load = useCallback(async () => {
     try {
@@ -304,7 +305,6 @@ export default function DashboardPage() {
     v == null ? "—" : formatDuration(v);
 
   const TRADES_PER_PAGE = 10;
-  const [tradesPage, setTradesPage] = useState(0);
   const totalPages = Math.max(1, Math.ceil(displayTrades.length / TRADES_PER_PAGE));
   const safePage = Math.min(tradesPage, totalPages - 1);
   const paginatedTrades = displayTrades.slice(
