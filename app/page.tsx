@@ -31,15 +31,29 @@ const AUTO_BURST_SECONDS = 30;
 const AUTO_BURST_INTERVAL_MS = 1000;
 
 /** Format date/time in UTC (matches Bitcoin market). */
-function formatUtc(date: Date, style: "time" | "datetime"): string {
+function formatUtc(date: Date, style: "time" | "datetime" | "date"): string {
   if (style === "time") {
     return date.toISOString().slice(11, 19);
+  }
+  if (style === "date") {
+    return new Intl.DateTimeFormat("en-GB", {
+      timeZone: "UTC",
+      dateStyle: "short",
+    }).format(date);
   }
   return new Intl.DateTimeFormat("en-GB", {
     timeZone: "UTC",
     dateStyle: "medium",
     timeStyle: "medium",
   }).format(date);
+}
+
+/** Parse timestamp (ISO string or unix seconds) to Date. */
+function parseTimestamp(ts: string | number | undefined | null): Date {
+  if (ts == null) return new Date(NaN);
+  if (typeof ts === "number") return new Date(ts * 1000);
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime()) ? new Date(0) : d;
 }
 
 function formatDuration(sec: number): string {
@@ -69,14 +83,14 @@ function buildChartData(
   const startSec = Math.max(updatedSec - uptimeSeconds, updatedSec - 86400 * 365);
   const out: LineData[] = [{ time: startSec as UTCTimestamp, value: startEquity }];
   const sorted = [...trades].sort(
-    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    (a, b) => parseTimestamp(a.timestamp).getTime() - parseTimestamp(b.timestamp).getTime()
   );
   let running = startEquity;
   for (const t of sorted) {
     const p = Number(t.pnl_usdc);
     if (!Number.isFinite(p)) continue;
     running += p;
-    const ts = Math.floor(new Date(t.timestamp).getTime() / 1000);
+    const ts = Math.floor(parseTimestamp(t.timestamp).getTime() / 1000);
     if (!Number.isFinite(running) || !Number.isFinite(ts)) continue;
     out.push({ time: ts as UTCTimestamp, value: running });
   }
@@ -271,7 +285,9 @@ export default function DashboardPage() {
   const market = state?.currentMarket ?? null;
   const priceToBeat = state?.priceToBeat ?? null;
   const trades = state?.trades ?? [];
-  const displayTrades = [...trades].reverse(); // show newest first, all trades
+  const displayTrades = [...trades].sort(
+    (a, b) => parseTimestamp(b.timestamp).getTime() - parseTimestamp(a.timestamp).getTime()
+  );
   const wins = trades.filter((t) => t.result === "WIN").length;
   const losses = trades.filter((t) => t.result === "LOSS").length;
   const timeouts = trades.filter((t) => t.result === "TIMEOUT").length;
@@ -632,16 +648,18 @@ export default function DashboardPage() {
                   <p className="text-[#6e7681] text-sm py-2">No decisions yet this session.</p>
                 );
               }
+              const byTsDesc = (a: DecisionLogEntry, b: DecisionLogEntry) =>
+                parseTimestamp(b.ts).getTime() - parseTimestamp(a.ts).getTime();
               return (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="min-w-0">
-                    <DecisionEntryList items={takes} title="Take" />
+                    <DecisionEntryList items={[...takes].sort(byTsDesc)} title="Take" />
                   </div>
                   <div className="min-w-0">
-                    <DecisionEntryList items={skips} title="Skip" />
+                    <DecisionEntryList items={[...skips].sort(byTsDesc)} title="Skip" />
                   </div>
                   <div className="min-w-0">
-                    <DecisionEntryList items={errors} title="Error" />
+                    <DecisionEntryList items={[...errors].sort(byTsDesc)} title="Error" />
                   </div>
                 </div>
               );
@@ -651,12 +669,12 @@ export default function DashboardPage() {
 
         {/* Trades */}
         <section className="rounded-xl bg-[#161b22] border border-[#30363d] overflow-hidden mb-6">
-          <h2 className="text-sm font-semibold text-[#8b949e] p-4 pb-0">All Trades (latest first)</h2>
+          <h2 className="text-sm font-semibold text-[#8b949e] p-4 pb-0">All Trades (newest first, UTC)</h2>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-[#8b949e] border-b border-[#30363d]">
-                  <th className="text-left py-3 px-4">Time</th>
+                  <th className="text-left py-3 px-4">Date & Time (UTC)</th>
                   <th className="text-left py-3 px-4">Side</th>
                   <th className="text-right py-3 px-4">Entry</th>
                   <th className="text-right py-3 px-4">Size</th>
@@ -676,8 +694,8 @@ export default function DashboardPage() {
                 ) : (
                   displayTrades.map((t, i) => (
                     <tr key={i} className="border-b border-[#21262d] hover:bg-[#21262d]/50">
-                      <td className="py-2 px-4 text-[#e6edf3] whitespace-nowrap">
-                        {formatUtc(new Date(t.timestamp), "time")}
+                      <td className="py-2 px-4 text-[#e6edf3] whitespace-nowrap" title={formatUtc(parseTimestamp(t.timestamp), "datetime")}>
+                        {formatUtc(parseTimestamp(t.timestamp), "datetime")}
                       </td>
                       <td className="py-2 px-4 font-mono">{t.side}</td>
                       <td className="py-2 px-4 text-right">${t.entry_price.toFixed(2)}</td>
@@ -827,20 +845,19 @@ function DecisionEntryList({
   title: string;
 }) {
   if (items.length === 0) return null;
-  const list = [...items].reverse();
   return (
     <div className="mb-4 last:mb-0">
       <h3 className="text-xs font-medium text-[#6e7681] uppercase tracking-wider mb-2">
         {title} ({items.length})
       </h3>
       <ul className="space-y-1.5 text-sm">
-        {list.map((e, i) => (
+        {items.map((e, i) => (
           <li
             key={`${e.ts}-${i}`}
             className="flex flex-wrap items-baseline gap-2 py-1.5 border-b border-[#21262d] last:border-0"
           >
-            <span className="text-[#6e7681] shrink-0">
-              {formatUtc(new Date(e.ts), "time")}
+            <span className="text-[#6e7681] shrink-0" title={formatUtc(parseTimestamp(e.ts), "datetime")}>
+              {formatUtc(parseTimestamp(e.ts), "datetime")}
             </span>
             <DecisionKindBadge kind={e.kind} />
             <span className="text-[#e6edf3]">{e.reason}</span>
