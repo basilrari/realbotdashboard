@@ -94,6 +94,7 @@ export interface LiveState {
   longestWinStreakTrades?: number;
   longestLossStreakTrades?: number;
   avgHoldingTimeSecs?: number;
+  minHoldingTimeSecs?: number;
   maxHoldingTimeSecs?: number;
   tradesPerDay?: number;
   tradesPerWeek?: number;

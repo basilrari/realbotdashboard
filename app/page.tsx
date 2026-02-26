@@ -303,12 +303,14 @@ export default function DashboardPage() {
   const fmtSecs = (v: number | undefined | null) =>
     v == null ? "—" : formatDuration(v);
 
-  const fmtHoldingTime = (avg: number | undefined | null, max: number | undefined | null) => {
-    const a = avg ?? 0;
-    const m = max ?? 0;
-    if (a === 0 && m === 0) return "—";
-    return `${formatDuration(a)} avg · ${formatDuration(m)} max`;
-  };
+  const TRADES_PER_PAGE = 10;
+  const [tradesPage, setTradesPage] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(displayTrades.length / TRADES_PER_PAGE));
+  const safePage = Math.min(tradesPage, totalPages - 1);
+  const paginatedTrades = displayTrades.slice(
+    safePage * TRADES_PER_PAGE,
+    (safePage + 1) * TRADES_PER_PAGE
+  );
 
   const startOfDayEquity =
     state?.startOfDayEquity ?? state?.initialEquity ?? state?.equity ?? 0;
@@ -317,7 +319,7 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-[#0d1117] text-[#e6edf3] font-sans">
-      <div className="max-w-6xl mx-auto px-4 py-6 sm:px-6 lg:px-8">
+      <div className="max-w-6xl mx-auto px-3 py-4 sm:px-6 sm:py-6 lg:px-8">
         {/* Header */}
         <header className="flex flex-wrap items-center justify-between gap-4 mb-6">
           <div className="flex items-center gap-2">
@@ -358,8 +360,11 @@ export default function DashboardPage() {
               ${(state?.equity ?? 0).toFixed(2)}
             </p>
           </div>
-          <div className="rounded-xl bg-[#161b22] border border-[#30363d] p-5 transition-transform duration-200 hover:-translate-y-0.5">
-            <p className="text-[#8b949e] text-sm mb-1">Live PnL</p>
+          <div
+            className="rounded-xl bg-[#161b22] border border-[#30363d] p-5 transition-transform duration-200 hover:-translate-y-0.5"
+            title="Sum of PnL from bot's local trades (this session). Use Total PnL (realized) for all-time."
+          >
+            <p className="text-[#8b949e] text-sm mb-1">Live PnL (session)</p>
             <p
               className={`text-3xl font-bold ${
                 livePnlFromTrades >= 0 ? "text-[#2dd4bf]" : "text-[#f87171]"
@@ -368,7 +373,7 @@ export default function DashboardPage() {
               {livePnlFromTrades >= 0 ? "+" : ""}
               ${livePnlFromTrades.toFixed(2)}
             </p>
-            <p className="text-xs text-[#6e7681] mt-0.5">Sum of all trade PnL</p>
+            <p className="text-xs text-[#6e7681] mt-0.5">Bot trades this session</p>
           </div>
           <div className="rounded-xl bg-[#161b22] border border-[#30363d] p-5 transition-transform duration-200 hover:-translate-y-0.5">
             <p className="text-[#8b949e] text-sm mb-1">Win rate · Resolved</p>
@@ -388,11 +393,13 @@ export default function DashboardPage() {
             label="Total PnL (realized)"
             value={fmtUsd(state?.totalRealizedPnlUsdc ?? state?.livePnl ?? 0)}
             trend={state?.totalRealizedPnlUsdc ?? state?.livePnl ?? 0}
+            title="Profit/loss from closed markets (all-time)"
           />
           <AnalyticsCard
             label="Unrealized PnL"
             value={fmtUsd(state?.totalUnrealizedPnlUsdc ?? 0)}
             trend={state?.totalUnrealizedPnlUsdc ?? 0}
+            title="PnL from open positions; locked in when market resolves"
           />
           <AnalyticsCard
             label="Total Volume"
@@ -406,29 +413,20 @@ export default function DashboardPage() {
 
         {/* Positions / trades / streaks */}
         <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-          <div className="rounded-xl bg-[#161b22] border border-[#30363d] p-4">
+          <div className="rounded-xl bg-[#161b22] border border-[#30363d] p-4 min-w-0">
             <h2 className="text-sm font-semibold text-[#8b949e] mb-3 flex items-center gap-2">
               <PieChart className="w-4 h-4 text-[#2dd4bf]" />
               Positions & Trades
             </h2>
-            <div className="grid grid-cols-2 gap-3 text-sm">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
               <Stat label="Trade executions" value={String(state?.totalTrades ?? 0)} title="Individual buy/sell events from API" />
               <Stat label="Open positions" value={String(state?.openPositions ?? 0)} />
-              <Stat
-                label="Redeemable"
-                value={String(state?.redeemablePositions ?? 0)}
-              />
+              <Stat label="Redeemable" value={String(state?.redeemablePositions ?? 0)} />
               <Stat label="Closed markets" value={String(state?.closedPositions ?? 0)} title="Markets fully closed or redeemed" />
-              <Stat
-                label="Trades / day"
-                value={(state?.tradesPerDay ?? 0).toFixed(2)}
-              />
-              <Stat
-                label="Trades / week"
-                value={(state?.tradesPerWeek ?? 0).toFixed(2)}
-              />
+              <Stat label="Trades/day" value={(state?.tradesPerDay ?? 0).toFixed(2)} />
+              <Stat label="Trades/week" value={(state?.tradesPerWeek ?? 0).toFixed(2)} />
             </div>
-            <div className="mt-3 text-xs text-[#6e7681] space-y-1">
+            <div className="mt-3 pt-3 border-t border-[#21262d] space-y-1.5 text-xs text-[#6e7681]">
               <div className="flex justify-between">
                 <span>Start-of-day equity</span>
                 <span className="text-white font-mono">
@@ -481,16 +479,17 @@ export default function DashboardPage() {
                   {fmtUsd(state?.largestMarketLossUsdc ?? 0)}
                 </span>
               </div>
-              <div className="mt-2 text-xs text-[#6e7681]">
-                Longest win streak:{" "}
-                <span className="text-white font-mono">
-                  {state?.longestWinStreakTrades ?? 0}
-                </span>{" "}
-                trades · Longest loss streak:{" "}
-                <span className="text-white font-mono">
-                  {state?.longestLossStreakTrades ?? 0}
-                </span>{" "}
-                trades
+              <div className="mt-2 space-y-1 text-xs text-[#6e7681]">
+                <div>
+                  Longest win streak:{" "}
+                  <span className="text-white font-mono">{state?.longestWinStreakTrades ?? 0}</span>{" "}
+                  trades
+                </div>
+                <div>
+                  Longest loss streak:{" "}
+                  <span className="text-white font-mono">{state?.longestLossStreakTrades ?? 0}</span>{" "}
+                  trades
+                </div>
               </div>
             </div>
           </div>
@@ -526,17 +525,26 @@ export default function DashboardPage() {
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-[#8b949e]">Holding time</span>
-                <span className="text-white font-mono text-right">
-                  {fmtHoldingTime(state?.avgHoldingTimeSecs, state?.maxHoldingTimeSecs)}
+                <span className="text-[#8b949e]">Holding time min</span>
+                <span className="text-white font-mono">
+                  {fmtSecs(state?.minHoldingTimeSecs)}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-[#8b949e]">Holding time max</span>
+                <span className="text-white font-mono">
+                  {fmtSecs(state?.maxHoldingTimeSecs)}
                 </span>
               </div>
             </div>
           </div>
         </section>
 
-        {/* Equity Curve — scroll (drag) and zoom (mouse wheel), full history */}
-        <section className="rounded-xl bg-[#161b22] border border-[#30363d] p-4 mb-6">
+        {/* Equity Curve — cumulative PnL over time */}
+        <section
+          className="rounded-xl bg-[#161b22] border border-[#30363d] p-4 mb-6"
+          title="Cumulative equity: start + each trade's PnL in order. Uses bot trades or API closed positions."
+        >
           <h2 className="text-sm font-semibold text-[#8b949e] mb-3 flex flex-wrap items-center gap-2">
             <TrendingUp className="w-4 h-4 text-[#2dd4bf]" />
             Equity Curve
@@ -598,9 +606,9 @@ export default function DashboardPage() {
             )}
           </section>
 
-          <section className="rounded-xl bg-[#161b22] border border-[#30363d] p-4">
+          <section className="rounded-xl bg-[#161b22] border border-[#30363d] p-4 min-w-0">
             <h2 className="text-sm font-semibold text-[#8b949e] mb-3">Live prices</h2>
-            <div className="grid grid-cols-2 sm:grid-cols-2 gap-3 sm:gap-4 text-sm min-w-0">
+            <div className="grid grid-cols-2 gap-3 sm:gap-4 text-sm">
               <PriceRow label="YES" value={state?.yesPrice} priceToBeat={priceToBeat} />
               <PriceRow label="NO" value={state?.noPrice} priceToBeat={priceToBeat} />
               <PriceRow
@@ -625,7 +633,7 @@ export default function DashboardPage() {
             <Clock className="w-4 h-4 text-[#2dd4bf]" />
             Uptime
           </h2>
-          <div className="flex flex-wrap gap-4 sm:gap-6 text-sm">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 text-sm">
             <Stat label="Total uptime" value={formatDuration(state?.uptimeSeconds ?? 0)} />
             <Stat label="Paused" value={formatDuration(state?.pausedSeconds ?? 0)} />
             <Stat label="RTDS stale" value={formatDuration(state?.totalRtdsDownSeconds ?? 0)} />
@@ -681,11 +689,38 @@ export default function DashboardPage() {
 
         {/* Trades */}
         <section className="rounded-xl bg-[#161b22] border border-[#30363d] overflow-hidden mb-6">
-          <h2 className="text-sm font-semibold text-[#8b949e] p-4 pb-0">
-            {localTrades.length > 0 ? "Bot trades" : "Closed markets (from API)"} — newest first, UTC
-          </h2>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2 p-4 pb-2">
+            <h2 className="text-sm font-semibold text-[#8b949e]">
+              {localTrades.length > 0 ? "Bot trades" : "Closed markets (from API)"} — newest first, UTC
+            </h2>
+            {displayTrades.length > TRADES_PER_PAGE && (
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-[#6e7681]">
+                  Page {safePage + 1} of {totalPages} ({displayTrades.length} total)
+                </span>
+                <div className="flex gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setTradesPage((p) => Math.max(0, p - 1))}
+                    disabled={safePage === 0}
+                    className="px-2 py-1 rounded border border-[#30363d] bg-[#21262d] text-[#e6edf3] disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#30363d]"
+                  >
+                    Prev
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTradesPage((p) => Math.min(totalPages - 1, p + 1))}
+                    disabled={safePage >= totalPages - 1}
+                    className="px-2 py-1 rounded border border-[#30363d] bg-[#21262d] text-[#e6edf3] disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#30363d]"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="overflow-x-auto -mx-4 sm:mx-0">
+            <table className="w-full text-sm min-w-[640px]">
               <thead>
                 <tr className="text-[#8b949e] border-b border-[#30363d]">
                   <th className="text-left py-3 px-4">Date & Time (UTC)</th>
@@ -700,15 +735,15 @@ export default function DashboardPage() {
                 </tr>
               </thead>
               <tbody>
-                {displayTrades.length === 0 ? (
+                {paginatedTrades.length === 0 ? (
                   <tr>
                     <td colSpan={9} className="py-8 text-center text-[#6e7681]">
                       No trades yet.
                     </td>
                   </tr>
                 ) : (
-                  displayTrades.map((t, i) => (
-                    <tr key={i} className="border-b border-[#21262d] hover:bg-[#21262d]/50">
+                  paginatedTrades.map((t, i) => (
+                    <tr key={`${t.timestamp}-${t.slug}-${i}`} className="border-b border-[#21262d] hover:bg-[#21262d]/50">
                       <td className="py-2 px-4 text-[#e6edf3] whitespace-nowrap" title={formatUtc(parseTimestamp(t.timestamp), "datetime")}>
                         {formatUtc(parseTimestamp(t.timestamp), "datetime")}
                       </td>
@@ -779,7 +814,7 @@ function PriceRow({
   return (
     <div className="flex justify-between items-center py-1.5 sm:py-2 gap-2 min-w-0">
       <span className="text-[#8b949e] shrink-0">{label}</span>
-      <span className="text-white font-mono text-right truncate">
+      <span className="text-white font-mono text-right break-all min-w-0">
         {isBtc ? `$${num.toFixed(2)}` : num.toFixed(4)}
         {isBtc && beat !== 0 && (
           <span className={`ml-1 shrink-0 ${diff >= 0 ? "text-[#2dd4bf]" : "text-[#f87171]"}`}>
@@ -832,10 +867,12 @@ function AnalyticsCard({
   label,
   value,
   trend,
+  title,
 }: {
   label: string;
   value: string;
   trend?: number;
+  title?: string;
 }) {
   const isPositive = trend != null && trend >= 0;
   const trendIcon =
@@ -845,7 +882,10 @@ function AnalyticsCard({
       <ArrowDownRight className="w-3 h-3 text-[#f87171]" />
     );
   return (
-    <div className="rounded-xl bg-[#161b22] border border-[#30363d] p-4 transition-transform duration-200 hover:-translate-y-0.5">
+    <div
+      className="rounded-xl bg-[#161b22] border border-[#30363d] p-4 transition-transform duration-200 hover:-translate-y-0.5"
+      title={title}
+    >
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs text-[#8b949e]">{label}</span>
         {trendIcon}
