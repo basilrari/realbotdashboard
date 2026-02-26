@@ -285,6 +285,12 @@ export default function DashboardPage() {
 
   const fmtSecs = (v: number | undefined | null) =>
     v == null ? "—" : formatDuration(v);
+
+  const startOfDayEquity =
+    state?.startOfDayEquity ?? state?.initialEquity ?? state?.equity ?? 0;
+  const dailyLossLimit = state?.dailyLossLimit ?? 0;
+  const maxDailyLoss = startOfDayEquity * dailyLossLimit;
+
   return (
     <div className="min-h-screen bg-[#0d1117] text-[#e6edf3] font-sans">
       <div className="max-w-6xl mx-auto px-4 py-6 sm:px-6 lg:px-8">
@@ -397,6 +403,23 @@ export default function DashboardPage() {
                 label="Trades / week"
                 value={(state?.tradesPerWeek ?? 0).toFixed(2)}
               />
+            </div>
+            <div className="mt-3 text-xs text-[#6e7681] space-y-1">
+              <div className="flex justify-between">
+                <span>Start-of-day equity</span>
+                <span className="text-white font-mono">
+                  {fmtUsd(startOfDayEquity)}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span>
+                  Max daily loss ({(dailyLossLimit * 100).toFixed(0)}
+                  %)
+                </span>
+                <span className="text-white font-mono">
+                  {fmtUsd(maxDailyLoss)}
+                </span>
+              </div>
             </div>
           </div>
 

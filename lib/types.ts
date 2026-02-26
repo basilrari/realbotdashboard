@@ -57,6 +57,10 @@ export interface LiveState {
   equity: number;
   /** Initial equity when bot started. Chart baseline. */
   initialEquity?: number;
+   /** Daily loss limit as a fraction of start-of-day equity (e.g. 0.33 = 33%). */
+  dailyLossLimit?: number;
+  /** Equity at start of current UTC day. */
+  startOfDayEquity?: number;
   livePnl: number;
   decisionLog: DecisionLogEntry[];
   tradeEvents: unknown[];
