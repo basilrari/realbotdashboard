@@ -81,14 +81,18 @@ function formatDuration(sec: number): string {
   return `${s}s`;
 }
 
-/** Pretty-print latency in ms with sub-ms support (e.g. 0.250ms, 2.34ms). */
-function formatLatencyMs(v: number | undefined | null): string {
+/** Pretty-print latency in µs using backend ms values (e.g. 4µs, 25µs, 1 200µs). */
+function formatLatencyUs(v: number | undefined | null): string {
   if (v == null || !Number.isFinite(v)) return "—";
-  if (v < 0.001) return "<0.001ms";
-  if (v < 1) return `${(v).toFixed(3)}ms`;
-  if (v < 10) return `${v.toFixed(2)}ms`;
-  if (v < 100) return `${v.toFixed(1)}ms`;
-  return `${v.toFixed(0)}ms`;
+  const us = v * 1000; // backend gives ms as f64
+  if (us < 0.5) return "<1µs";
+  if (us < 10) return `${us.toFixed(2)}µs`;
+  if (us < 100) return `${us.toFixed(1)}µs`;
+  if (us < 1000) return `${us.toFixed(0)}µs`;
+  // For >= 1ms, still show in µs but with a thin space for readability
+  if (us < 10_000) return `${(us / 1000).toFixed(2)}ms`;
+  if (us < 100_000) return `${(us / 1000).toFixed(1)}ms`;
+  return `${(us / 1000).toFixed(0)}ms`;
 }
 
 /** Start equity for the chart (111.80 based on initial investment). */
@@ -456,7 +460,7 @@ export default function DashboardPage() {
               <span className="text-white font-mono">${CHART_START_EQUITY.toFixed(2)}</span>
             </p>
             <p className="text-xs text-[#6e7681] mt-0.5">
-              Other / fees:&nbsp;
+              Other / fees (includes open positions and fees):&nbsp;
               <span
                 className={`font-mono ${
                   otherAdjustments >= 0 ? "text-[#2dd4bf]" : "text-[#f87171]"
@@ -670,21 +674,24 @@ export default function DashboardPage() {
             <Activity className="w-4 h-4 text-[#2dd4bf]" />
             Bot performance
           </h2>
+          <p className="text-xs text-[#6e7681] mb-1">
+            Time from a Polymarket orderbook (CLOB) update until the bot finishes its trading logic and places any order (measured in microseconds; lower is better).
+          </p>
           <p className="text-xs text-[#6e7681] mb-3">
-            Time from a Polymarket orderbook (CLOB) update until the bot finishes its trading logic and places any order; p50/p95/p99 are median and 95th/99th percentile latencies in ms (lower is better).
+            p50 = median (50% of events are faster), p95 = 95th percentile (only the slowest 5% are worse), p99 = 99th percentile (only the slowest 1% are worse).
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
             <div className="flex justify-between sm:flex-col sm:gap-0.5 rounded-lg bg-[#0d1117]/60 px-3 py-2">
               <span className="text-[#8b949e]">p50 (median)</span>
-              <span className="text-white font-mono tabular-nums">{formatLatencyMs(state?.hotPathP50Ms)}</span>
+              <span className="text-white font-mono tabular-nums">{formatLatencyUs(state?.hotPathP50Ms)}</span>
             </div>
             <div className="flex justify-between sm:flex-col sm:gap-0.5 rounded-lg bg-[#0d1117]/60 px-3 py-2">
               <span className="text-[#8b949e]">p95</span>
-              <span className="text-white font-mono tabular-nums">{formatLatencyMs(state?.hotPathP95Ms)}</span>
+              <span className="text-white font-mono tabular-nums">{formatLatencyUs(state?.hotPathP95Ms)}</span>
             </div>
             <div className="flex justify-between sm:flex-col sm:gap-0.5 rounded-lg bg-[#0d1117]/60 px-3 py-2">
               <span className="text-[#8b949e]">p99</span>
-              <span className="text-white font-mono tabular-nums">{formatLatencyMs(state?.hotPathP99Ms)}</span>
+              <span className="text-white font-mono tabular-nums">{formatLatencyUs(state?.hotPathP99Ms)}</span>
             </div>
           </div>
           <p className="text-xs text-[#6e7681] mt-2">
@@ -701,7 +708,7 @@ export default function DashboardPage() {
             <TrendingUp className="w-4 h-4 text-[#2dd4bf]" />
             Equity Curve
             <span className="text-xs font-mono text-[#6e7681]">
-              Resolved only · Amber line = ATH
+              Resolved only · Amber line = ATH · Excludes fees paid
             </span>
             <span className="text-xs font-normal text-[#6e7681]">
               Drag to pan · Scroll to zoom
