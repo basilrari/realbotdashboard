@@ -570,20 +570,12 @@ export default function DashboardPage() {
               </div>
             </div>
             <div className="mt-3 pt-3 border-t border-[#21262d] space-y-1.5 text-xs text-[#6e7681]">
-              <div className="flex justify-between items-baseline gap-2" title="Equity when the current 8h window started">
+              <div className="flex justify-between items-baseline gap-2" title="Equity when the current 8h loss window started">
                 <span className="shrink-0">Window-start equity (8h)</span>
                 <span className="text-white font-mono tabular-nums">{fmtUsd(startOfDayEquity)}</span>
               </div>
-              <div className="flex justify-between items-baseline gap-2" title="33% of window-start equity; resets every 8 hours">
-                <span className="shrink-0">33% limit (8h)</span>
-                <span className="text-white font-mono tabular-nums">{fmtUsd(maxDailyLoss)}</span>
-              </div>
-              <div className="flex justify-between items-baseline gap-2" title="Realized loss in current 8h window (capped at limit)">
-                <span className="shrink-0">Used of limit</span>
-                <span className="text-white font-mono tabular-nums">{fmtUsd(lossLimitUsed)}</span>
-              </div>
               <div className="flex justify-between items-baseline gap-2" title="When the current 8h loss-limit window started">
-                <span className="shrink-0">Last reset</span>
+                <span className="shrink-0">Last reset (UTC)</span>
                 <span className="text-white font-mono break-all text-right">
                   {lossLimitResetAt
                     ? `${formatUtc(parseTimestamp(lossLimitResetAt), "date")} ${formatUtc(
@@ -930,16 +922,16 @@ export default function DashboardPage() {
             )}
           </div>
           <div className="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0">
-            <table className="w-full text-sm min-w-[640px]">
+            <table className="w-full text-sm min-w-[720px]">
               <thead>
                 <tr className="text-[#8b949e] border-b border-[#30363d]">
-                  <th className="text-left py-3 px-3 sm:px-4">Date & Time (UTC)</th>
-                  <th className="text-left py-3 px-3 sm:px-4">Side</th>
-                  <th className="text-right py-3 px-3 sm:px-4">Entry</th>
-                  <th className="text-right py-3 px-3 sm:px-4">Size</th>
-                  <th className="text-left py-3 px-3 sm:px-4">Result</th>
-                  <th className="text-left py-3 px-3 sm:px-4">Collected</th>
-                  <th className="text-right py-3 px-3 sm:px-4">PnL</th>
+                  <th className="text-left py-3 px-3 sm:px-4 w-[190px]">Date & Time (UTC)</th>
+                  <th className="text-left py-3 px-3 sm:px-4 w-[70px]">Side</th>
+                  <th className="text-right py-3 px-3 sm:px-4 w-[80px]">Entry</th>
+                  <th className="text-right py-3 px-3 sm:px-4 w-[90px]">Size</th>
+                  <th className="text-left py-3 px-3 sm:px-4 w-[110px]">Result</th>
+                  <th className="text-left py-3 px-3 sm:px-4 w-[170px]">Collected</th>
+                  <th className="text-right py-3 px-3 sm:px-4 w-[90px]">PnL</th>
                 </tr>
               </thead>
               <tbody>
@@ -952,34 +944,42 @@ export default function DashboardPage() {
                 ) : (
                   paginatedTrades.map((t, i) => (
                     <tr key={`${t.timestamp}-${t.slug}-${i}`} className="border-b border-[#21262d] hover:bg-[#21262d]/50">
-                      <td className="py-2.5 px-3 sm:px-4 text-[#e6edf3] whitespace-nowrap" title={formatUtc(parseTimestamp(t.timestamp), "datetime")}>
+                      <td className="py-2.5 px-3 sm:px-4 text-[#e6edf3] whitespace-nowrap w-[190px]" title={formatUtc(parseTimestamp(t.timestamp), "datetime")}>
                         {formatUtc(parseTimestamp(t.timestamp), "datetime")}
                       </td>
-                      <td className="py-2.5 px-3 sm:px-4 font-mono">{t.side}</td>
-                      <td className="py-2.5 px-3 sm:px-4 text-right tabular-nums">${t.entry_price.toFixed(2)}</td>
-                      <td className="py-2.5 px-3 sm:px-4 text-right tabular-nums">${t.size_usdc.toFixed(2)}</td>
-                      <td className="py-2.5 px-3 sm:px-4">
-                        <ResultBadge result={t.result} />
+                      <td className="py-2.5 px-3 sm:px-4 font-mono w-[70px] whitespace-nowrap">
+                        {t.side}
                       </td>
-                      <td className="py-2.5 px-3 sm:px-4">
+                      <td className="py-2.5 px-3 sm:px-4 text-right tabular-nums w-[80px] whitespace-nowrap">
+                        ${t.entry_price.toFixed(2)}
+                      </td>
+                      <td className="py-2.5 px-3 sm:px-4 text-right tabular-nums w-[90px] whitespace-nowrap">
+                        ${t.size_usdc.toFixed(2)}
+                      </td>
+                      <td className="py-2.5 px-3 sm:px-4 w-[110px]">
+                        <ResultBadge
+                          result={
+                            t.redeemed && t.result === "PENDING" ? "COLLECTED" : t.result
+                          }
+                        />
+                      </td>
+                      <td className="py-2.5 px-3 sm:px-4 w-[170px]">
                         {t.redeemed && t.result === "PENDING" ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-[#2dd4bf]/20 text-[#2dd4bf]">
-                            <span>Collected</span>
-                            <span className="text-[10px] text-[#8b949e]">
-                              waiting for Polymarket data (
-                              {formatDuration(
-                                Math.min(
-                                  600,
-                                  Math.max(
-                                    0,
-                                    Math.floor(
-                                      (Date.now() - parseTimestamp(t.timestamp).getTime()) / 1000,
-                                    ),
+                          <span
+                            className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-[#2dd4bf]/20 text-[#2dd4bf]"
+                            title={`Waiting for Polymarket data (${formatDuration(
+                              Math.min(
+                                600,
+                                Math.max(
+                                  0,
+                                  Math.floor(
+                                    (Date.now() - parseTimestamp(t.timestamp).getTime()) / 1000,
                                   ),
                                 ),
-                              )}
-                              )
-                            </span>
+                              ),
+                            )})`}
+                          >
+                            Collected
                           </span>
                         ) : t.result === "PENDING" ? (
                           <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-[#6e7681]/20 text-[#8b949e]">
@@ -995,7 +995,7 @@ export default function DashboardPage() {
                           </span>
                         )}
                       </td>
-                      <td className="py-2.5 px-3 sm:px-4 text-right font-medium tabular-nums">
+                      <td className="py-2.5 px-3 sm:px-4 text-right font-medium tabular-nums w-[90px] whitespace-nowrap">
                         {t.redeemed && t.result === "PENDING" ? (
                           <span className="text-[#6e7681]">—</span>
                         ) : (
@@ -1061,15 +1061,18 @@ function Stat({ label, value, title }: { label: string; value: string; title?: s
 }
 
 function ResultBadge({ result }: { result: string }) {
+  const upper = result.toUpperCase();
   const style =
-    result === "WIN"
+    upper === "WIN"
       ? "bg-[#2dd4bf]/20 text-[#2dd4bf]"
-      : result === "LOSS"
+      : upper === "LOSS"
         ? "bg-[#f87171]/20 text-[#f87171]"
-        : "bg-[#6e7681]/20 text-[#8b949e]";
+        : upper === "COLLECTED"
+          ? "bg-[#2dd4bf]/20 text-[#2dd4bf]"
+          : "bg-[#6e7681]/20 text-[#8b949e]";
   return (
     <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${style}`}>
-      {result}
+      {upper}
     </span>
   );
 }
