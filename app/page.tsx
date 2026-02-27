@@ -91,8 +91,8 @@ function formatLatencyMs(v: number | undefined | null): string {
   return `${v.toFixed(0)}ms`;
 }
 
-/** Start equity for the chart (110.51 so chart matches live balance + total PnL). */
-const CHART_START_EQUITY = 110.51;
+/** Start equity for the chart (111.80 based on initial investment). */
+const CHART_START_EQUITY = 111.8;
 
 /** Build chart data from resolved trades only (WIN/LOSS). */
 function buildChartData(trades: TradeRecord[]): { data: LineData[]; ath: number } {
@@ -390,6 +390,10 @@ export default function DashboardPage() {
   const fmtSecs = (v: number | undefined | null) =>
     v == null ? "—" : formatDuration(v);
 
+  const realizedPnlAllTime = state?.totalRealizedPnlUsdc ?? state?.livePnl ?? 0;
+  const otherAdjustments =
+    (state?.equity ?? 0) - (CHART_START_EQUITY + realizedPnlAllTime);
+
   const TRADES_PER_PAGE = 10;
   const totalPages = Math.max(1, Math.ceil(displayTrades.length / TRADES_PER_PAGE));
   const safePage = Math.min(tradesPage, totalPages - 1);
@@ -450,6 +454,17 @@ export default function DashboardPage() {
             <p className="text-xs text-[#6e7681] mt-0.5">
               Start equity:&nbsp;
               <span className="text-white font-mono">${CHART_START_EQUITY.toFixed(2)}</span>
+            </p>
+            <p className="text-xs text-[#6e7681] mt-0.5">
+              Other / fees:&nbsp;
+              <span
+                className={`font-mono ${
+                  otherAdjustments >= 0 ? "text-[#2dd4bf]" : "text-[#f87171]"
+                }`}
+              >
+                {otherAdjustments >= 0 ? "+" : "-"}
+                {fmtUsd(Math.abs(otherAdjustments))}
+              </span>
             </p>
           </div>
           <div
