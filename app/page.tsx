@@ -967,7 +967,7 @@ export default function DashboardPage() {
                         {t.redeemed && t.result === "PENDING" ? (
                           <span
                             className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-[#2dd4bf]/20 text-[#2dd4bf]"
-                            title={`Waiting for Polymarket data (${formatDuration(
+                            title={`Equity updated from redemption; waiting for Polymarket PnL data (${formatDuration(
                               Math.min(
                                 600,
                                 Math.max(
@@ -996,7 +996,7 @@ export default function DashboardPage() {
                         )}
                       </td>
                       <td className="py-2.5 px-3 sm:px-4 text-right font-medium tabular-nums w-[90px] whitespace-nowrap">
-                        {t.redeemed && t.result === "PENDING" ? (
+                        {t.result === "PENDING" ? (
                           <span className="text-[#6e7681]">—</span>
                         ) : (
                           <span
