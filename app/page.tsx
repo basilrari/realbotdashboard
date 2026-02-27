@@ -38,7 +38,8 @@ function formatUtc(date: Date, style: "time" | "datetime" | "date"): string {
   if (style === "date") {
     return new Intl.DateTimeFormat("en-GB", {
       timeZone: "UTC",
-      dateStyle: "short",
+      day: "2-digit",
+      month: "short",
     }).format(date);
   }
   return new Intl.DateTimeFormat("en-GB", {
@@ -46,6 +47,15 @@ function formatUtc(date: Date, style: "time" | "datetime" | "date"): string {
     dateStyle: "medium",
     timeStyle: "medium",
   }).format(date);
+}
+
+/** Normalise side labels across sources (local trades vs Data API). */
+function normalizeSide(raw: string | undefined | null): string {
+  if (!raw) return "";
+  const s = raw.toUpperCase();
+  if (s === "UP") return "YES";
+  if (s === "DOWN") return "NO";
+  return s;
 }
 
 /** Parse timestamp (ISO string or unix seconds) to Date. */
@@ -369,11 +379,13 @@ export default function DashboardPage() {
   const tradesMerged = (() => {
     const bySlugSide = new Map<string, (typeof localTrades)[0]>();
     for (const t of localTrades) {
-      bySlugSide.set(`${t.slug}\t${t.side ?? ""}`, t);
+      const sideNorm = normalizeSide(t.side);
+      bySlugSide.set(`${t.slug}\t${sideNorm}`, { ...t, side: sideNorm });
     }
     for (const t of analyticsTrades) {
-      const key = `${t.slug}\t${t.side ?? ""}`;
-      bySlugSide.set(key, t as (typeof localTrades)[0]);
+      const sideNorm = normalizeSide((t as any).side);
+      const key = `${(t as any).slug}\t${sideNorm}`;
+      bySlugSide.set(key, { ...(t as (typeof localTrades)[0]), side: sideNorm });
     }
     return Array.from(bySlugSide.values());
   })();
@@ -384,7 +396,8 @@ export default function DashboardPage() {
   const wins = state?.resolvedWinCount ?? localTrades.filter((t) => t.result === "WIN").length;
   const losses = state?.resolvedLossCount ?? localTrades.filter((t) => t.result === "LOSS").length;
   const totalResolved = wins + losses;
-  const livePnlFromTrades = localTrades.reduce((sum, t) => sum + (t.pnl_usdc ?? 0), 0);
+  // Use merged trades (local + analytics), so PnL reflects resolved positions even after restarts.
+  const livePnlFromTrades = trades.reduce((sum, t) => sum + (t.pnl_usdc ?? 0), 0);
   const winRate = totalResolved > 0 ? (wins / totalResolved) * 100 : 0;
   const analyticsWinRate = state?.tradeWinRatePct ?? winRate;
 
@@ -427,6 +440,14 @@ export default function DashboardPage() {
               <RefreshCw className={`w-4 h-4 ${isAutoBurst ? "animate-spin" : ""}`} />
               Updated {lastUpdated ? formatUtc(lastUpdated, "time") : "—"}
             </span>
+            {state?.botPaused && (
+              <span
+                className="inline-flex items-center justify-center rounded-full border border-amber-500/60 bg-amber-500/10 text-amber-400 px-2 py-1"
+                title="Bot is paused"
+              >
+                <Pause className="w-3 h-3" />
+              </span>
+            )}
             <button
               type="button"
               onClick={() => setIsAutoBurst(true)}
@@ -440,11 +461,6 @@ export default function DashboardPage() {
               <RefreshCw className="w-3 h-3" />
               {isAutoBurst ? "Auto refresh (1s · 30s)" : "Refresh (1s · 30s)"}
             </button>
-            {state?.botPaused && (
-              <span className="flex items-center gap-1 text-amber-400">
-                <Pause className="w-4 h-4" /> Paused
-              </span>
-            )}
           </div>
         </header>
 
@@ -460,7 +476,7 @@ export default function DashboardPage() {
               <span className="text-white font-mono">${CHART_START_EQUITY.toFixed(2)}</span>
             </p>
             <p className="text-xs text-[#6e7681] mt-0.5">
-              Other / fees (includes open positions and fees):&nbsp;
+              Open positions and fees:&nbsp;
               <span
                 className={`font-mono ${
                   otherAdjustments >= 0 ? "text-[#2dd4bf]" : "text-[#f87171]"
@@ -487,10 +503,10 @@ export default function DashboardPage() {
             <p className="text-xs text-[#6e7681] mt-0.5">Bot trades this session</p>
           </div>
           <div className="rounded-xl bg-[#161b22] border border-[#30363d] p-5 transition-transform duration-200 hover:-translate-y-0.5">
-            <p className="text-[#8b949e] text-sm mb-1">Win rate · Resolved</p>
+            <p className="text-[#8b949e] text-sm mb-1">Win rate · Resolved trades</p>
             <p className="text-2xl font-bold text-white">
               {analyticsWinRate.toFixed(0)}%{" "}
-              <span className="text-[#8b949e] font-normal">· {totalResolved} markets</span>
+              <span className="text-[#8b949e] font-normal">· {totalResolved} trades</span>
             </p>
             <p className="text-xs text-[#6e7681] mt-0.5">
               {wins} wins · {losses} losses
@@ -570,7 +586,9 @@ export default function DashboardPage() {
               </div>
               <div className="flex justify-between items-baseline gap-2" title="When the current 8h loss-limit window started">
                 <span className="shrink-0">Last reset</span>
-                <span className="text-white font-mono break-all text-right">{lossLimitResetAt ? formatUtc(parseTimestamp(lossLimitResetAt), "datetime") : "—"}</span>
+                <span className="text-white font-mono break-all text-right">
+                  {lossLimitResetAt ? formatUtc(parseTimestamp(lossLimitResetAt), "date") : "—"}
+                </span>
               </div>
               <div className="flex justify-between items-baseline gap-2" title="USDC allowance for CLOB; refreshed hourly">
                 <span className="shrink-0">CLOB spending approval</span>
@@ -582,17 +600,14 @@ export default function DashboardPage() {
           <div className="rounded-xl bg-[#161b22] border border-[#30363d] p-4">
             <h2 className="text-sm font-semibold text-[#8b949e] mb-3 flex items-center gap-2">
               <TrendingUp className="w-4 h-4 text-[#2dd4bf]" />
-              Best & Worst Markets
+              Best & Worst Trades
             </h2>
             <div className="space-y-2 text-sm">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[#8b949e] flex items-center gap-1 shrink-0">
                   <ArrowUpRight className="w-3 h-3 text-[#2dd4bf]" /> Best
                 </span>
-                <span className="text-right text-white font-mono truncate min-w-0" title={state?.largestMarketProfitSlug ?? undefined}>
-                  {state?.largestMarketProfitSlug ?? "—"}
-                </span>
-                <span className="text-right text-[#2dd4bf] font-mono shrink-0">
+                <span className="ml-auto text-right text-[#2dd4bf] font-mono shrink-0">
                   {fmtUsd(state?.largestMarketProfitUsdc ?? 0)}
                 </span>
               </div>
@@ -600,10 +615,7 @@ export default function DashboardPage() {
                 <span className="text-[#8b949e] flex items-center gap-1 shrink-0">
                   <ArrowDownRight className="w-3 h-3 text-[#f87171]" /> Worst
                 </span>
-                <span className="text-right text-white font-mono truncate min-w-0" title={state?.largestMarketLossSlug ?? undefined}>
-                  {state?.largestMarketLossSlug ?? "—"}
-                </span>
-                <span className="text-right text-[#f87171] font-mono shrink-0">
+                <span className="ml-auto text-right text-[#f87171] font-mono shrink-0">
                   {fmtUsd(state?.largestMarketLossUsdc ?? 0)}
                 </span>
               </div>
@@ -616,6 +628,13 @@ export default function DashboardPage() {
                 <div>
                   Longest loss streak:{" "}
                   <span className="text-white font-mono">{state?.longestLossStreakTrades ?? 0}</span>{" "}
+                  trades
+                </div>
+                <div>
+                  Current win streak:{" "}
+                  <span className="text-white font-mono">
+                    {state?.currentWinStreakTrades ?? 0}
+                  </span>{" "}
                   trades
                 </div>
               </div>
@@ -674,24 +693,27 @@ export default function DashboardPage() {
             <Activity className="w-4 h-4 text-[#2dd4bf]" />
             Bot performance
           </h2>
-          <p className="text-xs text-[#6e7681] mb-1">
-            Time from a Polymarket orderbook (CLOB) update until the bot finishes its trading logic and places any order (measured in microseconds; lower is better).
-          </p>
           <p className="text-xs text-[#6e7681] mb-3">
-            p50 = median (50% of events are faster), p95 = 95th percentile (only the slowest 5% are worse), p99 = 99th percentile (only the slowest 1% are worse).
+            Hot-path latency from orderbook update to trading decision (lower is better). p50 = median, p95 = 95th percentile, p99 = 99th percentile.
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
-            <div className="flex justify-between sm:flex-col sm:gap-0.5 rounded-lg bg-[#0d1117]/60 px-3 py-2">
-              <span className="text-[#8b949e]">p50 (median)</span>
-              <span className="text-white font-mono tabular-nums">{formatLatencyUs(state?.hotPathP50Ms)}</span>
+            <div className="flex items-center justify-between rounded-lg bg-[#0d1117]/60 px-3 py-2">
+              <span className="text-white font-mono tabular-nums">
+                {formatLatencyUs(state?.hotPathP50Ms)}
+              </span>
+              <span className="text-[#8b949e] text-xs sm:text-sm">p50 (median)</span>
             </div>
-            <div className="flex justify-between sm:flex-col sm:gap-0.5 rounded-lg bg-[#0d1117]/60 px-3 py-2">
-              <span className="text-[#8b949e]">p95</span>
-              <span className="text-white font-mono tabular-nums">{formatLatencyUs(state?.hotPathP95Ms)}</span>
+            <div className="flex items-center justify-between rounded-lg bg-[#0d1117]/60 px-3 py-2">
+              <span className="text-white font-mono tabular-nums">
+                {formatLatencyUs(state?.hotPathP95Ms)}
+              </span>
+              <span className="text-[#8b949e] text-xs sm:text-sm">p95</span>
             </div>
-            <div className="flex justify-between sm:flex-col sm:gap-0.5 rounded-lg bg-[#0d1117]/60 px-3 py-2">
-              <span className="text-[#8b949e]">p99</span>
-              <span className="text-white font-mono tabular-nums">{formatLatencyUs(state?.hotPathP99Ms)}</span>
+            <div className="flex items-center justify-between rounded-lg bg-[#0d1117]/60 px-3 py-2">
+              <span className="text-white font-mono tabular-nums">
+                {formatLatencyUs(state?.hotPathP99Ms)}
+              </span>
+              <span className="text-[#8b949e] text-xs sm:text-sm">p99</span>
             </div>
           </div>
           <p className="text-xs text-[#6e7681] mt-2">
@@ -767,17 +789,35 @@ export default function DashboardPage() {
 
           <section className="rounded-xl bg-[#161b22] border border-[#30363d] p-4 min-w-0">
             <h2 className="text-sm font-semibold text-[#8b949e] mb-3">Live prices</h2>
-            <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm min-w-0">
-              <div className="flex justify-between items-center gap-3 min-w-0">
-                <span className="text-[#8b949e] shrink-0 w-16">YES</span>
-                <span className="text-white font-mono text-right tabular-nums break-all">{state?.yesPrice != null ? state.yesPrice.toFixed(4) : "—"}</span>
+            <div className="flex flex-col gap-3 text-sm min-w-0">
+              <div className="flex flex-col gap-2">
+                <div className="flex justify-between items-center gap-3 min-w-0">
+                  <span className="text-[#8b949e] shrink-0 w-16">YES</span>
+                  <span className="text-white font-mono text-right tabular-nums break-all">
+                    {state?.yesPrice != null ? state.yesPrice.toFixed(4) : "—"}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center gap-3 min-w-0">
+                  <span className="text-[#8b949e] shrink-0 w-16">NO</span>
+                  <span className="text-white font-mono text-right tabular-nums break-all">
+                    {state?.noPrice != null ? state.noPrice.toFixed(4) : "—"}
+                  </span>
+                </div>
               </div>
-              <div className="flex justify-between items-center gap-3 min-w-0">
-                <span className="text-[#8b949e] shrink-0 w-16">NO</span>
-                <span className="text-white font-mono text-right tabular-nums break-all">{state?.noPrice != null ? state.noPrice.toFixed(4) : "—"}</span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 min-w-0">
+                <PriceRow
+                  label="Chainlink"
+                  value={state?.chainlinkBtcPrice}
+                  priceToBeat={priceToBeat}
+                  isBtc
+                />
+                <PriceRow
+                  label="Binance"
+                  value={state?.btcPrice}
+                  priceToBeat={priceToBeat}
+                  isBtc
+                />
               </div>
-              <PriceRow label="Chainlink" value={state?.chainlinkBtcPrice} priceToBeat={priceToBeat} isBtc />
-              <PriceRow label="Binance" value={state?.btcPrice} priceToBeat={priceToBeat} isBtc />
             </div>
           </section>
         </div>
@@ -916,7 +956,11 @@ export default function DashboardPage() {
                       <td className="py-2.5 px-3 sm:px-4 text-right tabular-nums">${t.entry_price.toFixed(2)}</td>
                       <td className="py-2.5 px-3 sm:px-4 text-right tabular-nums">${t.size_usdc.toFixed(2)}</td>
                       <td className="py-2.5 px-3 sm:px-4">
-                        <ResultBadge result={t.result} />
+                        <ResultBadge
+                          result={
+                            t.redeemed && t.result === "PENDING" ? "COLLECTED" : t.result
+                          }
+                        />
                       </td>
                       <td className="py-2.5 px-3 sm:px-4">
                         {t.redeemed ? (

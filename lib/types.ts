@@ -105,6 +105,8 @@ export interface LiveState {
   maxRedemptionLagSecs?: number;
   longestWinStreakTrades?: number;
   longestLossStreakTrades?: number;
+  currentWinStreakTrades?: number;
+  currentLossStreakTrades?: number;
   avgHoldingTimeSecs?: number;
   minHoldingTimeSecs?: number;
   maxHoldingTimeSecs?: number;
