@@ -364,18 +364,18 @@ export default function DashboardPage() {
   const priceToBeat = state?.priceToBeat ?? null;
   const localTrades = state?.trades ?? [];
   const analyticsTrades = state?.analyticsTrades ?? [];
-  // Merge both sources for full history: dedupe by slug+timestamp, sort newest first
+  // Merge both sources: prefer Polymarket/analytics PnL when both exist (Phase 1).
+  // Match by slug+side (analytics = one per closed position; local = one per execution).
   const tradesMerged = (() => {
-    const byKey = new Map<string, (typeof localTrades)[0]>();
-    for (const t of analyticsTrades) {
-      const key = `${t.slug}\t${t.timestamp}\t${t.side ?? ""}`;
-      if (!byKey.has(key)) byKey.set(key, t as (typeof localTrades)[0]);
-    }
+    const bySlugSide = new Map<string, (typeof localTrades)[0]>();
     for (const t of localTrades) {
-      const key = `${t.slug}\t${t.timestamp}\t${t.side ?? ""}`;
-      byKey.set(key, t);
+      bySlugSide.set(`${t.slug}\t${t.side ?? ""}`, t);
     }
-    return Array.from(byKey.values());
+    for (const t of analyticsTrades) {
+      const key = `${t.slug}\t${t.side ?? ""}`;
+      bySlugSide.set(key, t as (typeof localTrades)[0]);
+    }
+    return Array.from(bySlugSide.values());
   })();
   const trades = tradesMerged;
   const displayTrades = [...trades].sort(
