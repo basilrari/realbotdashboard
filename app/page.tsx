@@ -65,45 +65,52 @@ function formatDuration(sec: number): string {
   return `${s}s`;
 }
 
-/** Build chart data with UTCTimestamp (unix seconds) for lightweight-charts. Uses full history. */
+/** Account starting equity (hardcoded). */
+const ACCOUNT_START_EQUITY = 109;
+
+/** Build chart data from resolved trades only (WIN/LOSS). Points added only after outcome is confirmed. */
 function buildChartData(
   trades: TradeRecord[],
-  stateEquity: number,
-  livePnl: number,
-  initialEquity: number | undefined,
+  _stateEquity: number,
+  _livePnl: number,
+  _initialEquity: number | undefined,
   updatedAt: string,
   uptimeSeconds: number
-): LineData[] {
-  const eq = Number(stateEquity);
-  const pnl = Number(livePnl);
-  const init = initialEquity != null && initialEquity > 0 ? Number(initialEquity) : Math.max(0, eq - pnl);
-  const startEquity = Number.isFinite(init) ? init : 0;
+): { data: LineData[]; ath: number } {
+  const startEquity = ACCOUNT_START_EQUITY;
   const nowSec = Math.floor(Date.now() / 1000);
   const updatedSec = Math.floor(new Date(updatedAt || 0).getTime() / 1000);
   const startSec = Math.max(updatedSec - uptimeSeconds, updatedSec - 86400 * 365);
   const out: LineData[] = [{ time: startSec as UTCTimestamp, value: startEquity }];
-  const sorted = [...trades].sort(
+  const resolved = trades.filter(
+    (t) => t.result === "WIN" || t.result === "LOSS"
+  );
+  const sorted = [...resolved].sort(
     (a, b) => parseTimestamp(a.timestamp).getTime() - parseTimestamp(b.timestamp).getTime()
   );
   let running = startEquity;
+  let ath = startEquity;
   for (const t of sorted) {
     const p = Number(t.pnl_usdc);
     if (!Number.isFinite(p)) continue;
     running += p;
+    if (running > ath) ath = running;
     const ts = Math.floor(parseTimestamp(t.timestamp).getTime() / 1000);
     if (!Number.isFinite(running) || !Number.isFinite(ts)) continue;
     out.push({ time: ts as UTCTimestamp, value: running });
   }
-  if (Number.isFinite(eq)) {
-    out.push({ time: nowSec as UTCTimestamp, value: eq });
+  // Extend flat to now so we don't show temporary drawdown from open positions
+  if (out.length >= 1 && out[out.length - 1].time !== nowSec) {
+    out.push({ time: nowSec as UTCTimestamp, value: running });
   }
   const valid = out.filter((d) => d != null && Number.isFinite(d.value) && d.time != null);
-  // Dedupe by time (keep last) to avoid lightweight-charts "Value is null"
   const seen = new Map<number, LineData>();
   for (const d of valid) {
     seen.set(d.time as number, d);
   }
-  return [...seen.entries()].sort((a, b) => a[0] - b[0]).map(([, d]) => d);
+  const data = [...seen.entries()].sort((a, b) => a[0] - b[0]).map(([, d]) => d);
+  const maxVal = data.length ? Math.max(...data.map((d) => d.value as number)) : startEquity;
+  return { data, ath: Math.max(ath, maxVal) };
 }
 
 /** TradingView-style equity chart: scroll (drag) and zoom (mouse wheel). Uses full history. */
@@ -125,6 +132,7 @@ function EquityChart({
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const athSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -170,13 +178,15 @@ function EquityChart({
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
+      athSeriesRef.current = null;
     };
   }, []);
 
   useEffect(() => {
+    const chart = chartRef.current;
     const series = seriesRef.current;
-    if (!series) return;
-    const data = buildChartData(
+    if (!chart || !series) return;
+    const { data, ath } = buildChartData(
       trades,
       stateEquity,
       livePnl,
@@ -186,15 +196,41 @@ function EquityChart({
     );
     if (data.length < 2) {
       const fallback = [
-        { time: Math.floor(Date.now() / 1000) as UTCTimestamp, value: stateEquity || 0 },
-        { time: (Math.floor(Date.now() / 1000) + 1) as UTCTimestamp, value: stateEquity || 0 },
+        { time: Math.floor(Date.now() / 1000) as UTCTimestamp, value: ACCOUNT_START_EQUITY },
+        { time: (Math.floor(Date.now() / 1000) + 1) as UTCTimestamp, value: ACCOUNT_START_EQUITY },
       ];
       series.setData(fallback);
+      if (athSeriesRef.current) {
+        athSeriesRef.current.setData([
+          { time: fallback[0].time, value: ACCOUNT_START_EQUITY },
+          { time: fallback[1].time, value: ACCOUNT_START_EQUITY },
+        ]);
+      }
     } else {
       series.setData(data);
+      const athData: LineData[] = [
+        { time: data[0].time, value: ath },
+        { time: data[data.length - 1].time, value: ath },
+      ];
+      if (!athSeriesRef.current) {
+        const athSeries = chart.addSeries(LineSeries, {
+          color: "rgba(251, 191, 36, 0.8)",
+          lineWidth: 1,
+          lineStyle: 2, // dashed
+          priceFormat: { type: "price", precision: 2, minMove: 0.01 },
+        });
+        athSeriesRef.current = athSeries as ISeriesApi<"Line">;
+      }
+      athSeriesRef.current.setData(athData);
     }
-    chartRef.current?.timeScale().fitContent();
+    chart.timeScale().fitContent();
   }, [trades, stateEquity, livePnl, initialEquity, updatedAt, uptimeSeconds]);
+
+  useEffect(() => {
+    return () => {
+      athSeriesRef.current = null;
+    };
+  }, []);
 
   return <div ref={containerRef} className="w-full h-full min-h-[280px]" />;
 }
@@ -287,7 +323,20 @@ export default function DashboardPage() {
   const priceToBeat = state?.priceToBeat ?? null;
   const localTrades = state?.trades ?? [];
   const analyticsTrades = state?.analyticsTrades ?? [];
-  const trades = localTrades.length > 0 ? localTrades : analyticsTrades;
+  // Merge both sources for full history: dedupe by slug+timestamp, sort newest first
+  const tradesMerged = (() => {
+    const byKey = new Map<string, (typeof localTrades)[0]>();
+    for (const t of analyticsTrades) {
+      const key = `${t.slug}\t${t.timestamp}\t${t.side ?? ""}`;
+      if (!byKey.has(key)) byKey.set(key, t as (typeof localTrades)[0]);
+    }
+    for (const t of localTrades) {
+      const key = `${t.slug}\t${t.timestamp}\t${t.side ?? ""}`;
+      byKey.set(key, t);
+    }
+    return Array.from(byKey.values());
+  })();
+  const trades = tradesMerged;
   const displayTrades = [...trades].sort(
     (a, b) => parseTimestamp(b.timestamp).getTime() - parseTimestamp(a.timestamp).getTime()
   );
@@ -420,44 +469,52 @@ export default function DashboardPage() {
               <PieChart className="w-4 h-4 text-[#2dd4bf]" />
               Positions & Trades
             </h2>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-              <Stat label="Trade executions" value={String(state?.totalTrades ?? 0)} title="Individual buy/sell events from API" />
-              <Stat label="Open positions" value={String(state?.openPositions ?? 0)} />
-              <Stat label="Redeemable" value={String(state?.redeemablePositions ?? 0)} />
-              <Stat label="Closed markets" value={String(state?.closedPositions ?? 0)} title="Markets fully closed or redeemed" />
-              <Stat label="Trades/day" value={(state?.tradesPerDay ?? 0).toFixed(2)} />
-              <Stat label="Trades/week" value={(state?.tradesPerWeek ?? 0).toFixed(2)} />
+            <div className="grid grid-cols-4 gap-x-4 gap-y-2 text-sm items-baseline">
+              <div className="col-span-2 flex justify-between items-baseline gap-2" title="Individual buy/sell events from API">
+                <span className="text-[#8b949e] shrink-0">Trade executions:</span>
+                <span className="text-white font-mono tabular-nums">{state?.totalTrades ?? 0}</span>
+              </div>
+              <div className="col-span-2 flex justify-between items-baseline gap-2">
+                <span className="text-[#8b949e] shrink-0">Open positions:</span>
+                <span className="text-white font-mono tabular-nums">{state?.openPositions ?? 0}</span>
+              </div>
+              <div className="col-span-2 flex justify-between items-baseline gap-2">
+                <span className="text-[#8b949e] shrink-0">Redeemable:</span>
+                <span className="text-white font-mono tabular-nums">{state?.redeemablePositions ?? 0}</span>
+              </div>
+              <div className="col-span-2 flex justify-between items-baseline gap-2" title="Markets fully closed or redeemed">
+                <span className="text-[#8b949e] shrink-0">Closed markets:</span>
+                <span className="text-white font-mono tabular-nums">{state?.closedPositions ?? 0}</span>
+              </div>
+              <div className="col-span-2 flex justify-between items-baseline gap-2">
+                <span className="text-[#8b949e] shrink-0">Trades/day:</span>
+                <span className="text-white font-mono tabular-nums">{(state?.tradesPerDay ?? 0).toFixed(2)}</span>
+              </div>
+              <div className="col-span-2 flex justify-between items-baseline gap-2">
+                <span className="text-[#8b949e] shrink-0">Trades/week:</span>
+                <span className="text-white font-mono tabular-nums">{(state?.tradesPerWeek ?? 0).toFixed(2)}</span>
+              </div>
             </div>
             <div className="mt-3 pt-3 border-t border-[#21262d] space-y-1.5 text-xs text-[#6e7681]">
-              <div className="flex justify-between" title="Equity when the current 8h window started">
-                <span>Window-start equity (8h)</span>
-                <span className="text-white font-mono">
-                  {fmtUsd(startOfDayEquity)}
-                </span>
+              <div className="flex justify-between items-baseline gap-2" title="Equity when the current 8h window started">
+                <span className="shrink-0">Window-start equity (8h)</span>
+                <span className="text-white font-mono tabular-nums">{fmtUsd(startOfDayEquity)}</span>
               </div>
-              <div className="flex justify-between" title="33% of window-start equity; resets every 8 hours">
-                <span>33% limit (8h)</span>
-                <span className="text-white font-mono">
-                  {fmtUsd(maxDailyLoss)}
-                </span>
+              <div className="flex justify-between items-baseline gap-2" title="33% of window-start equity; resets every 8 hours">
+                <span className="shrink-0">33% limit (8h)</span>
+                <span className="text-white font-mono tabular-nums">{fmtUsd(maxDailyLoss)}</span>
               </div>
-              <div className="flex justify-between" title="Realized loss in current 8h window (capped at limit)">
-                <span>Used of limit</span>
-                <span className="text-white font-mono">
-                  {fmtUsd(lossLimitUsed)}
-                </span>
+              <div className="flex justify-between items-baseline gap-2" title="Realized loss in current 8h window (capped at limit)">
+                <span className="shrink-0">Used of limit</span>
+                <span className="text-white font-mono tabular-nums">{fmtUsd(lossLimitUsed)}</span>
               </div>
-              <div className="flex justify-between" title="When the current 8h loss-limit window started">
-                <span>Last reset</span>
-                <span className="text-white font-mono break-all">
-                  {lossLimitResetAt ? formatUtc(parseTimestamp(lossLimitResetAt), "datetime") : "—"}
-                </span>
+              <div className="flex justify-between items-baseline gap-2" title="When the current 8h loss-limit window started">
+                <span className="shrink-0">Last reset</span>
+                <span className="text-white font-mono break-all text-right">{lossLimitResetAt ? formatUtc(parseTimestamp(lossLimitResetAt), "datetime") : "—"}</span>
               </div>
-              <div className="flex justify-between" title="USDC allowance for CLOB; refreshed hourly">
-                <span>CLOB spending approval</span>
-                <span className="text-white font-mono">
-                  {fmtUsd(state?.clobSpendingApprovalUsdc)}
-                </span>
+              <div className="flex justify-between items-baseline gap-2" title="USDC allowance for CLOB; refreshed hourly">
+                <span className="shrink-0">CLOB spending approval</span>
+                <span className="text-white font-mono tabular-nums">{fmtUsd(state?.clobSpendingApprovalUsdc)}</span>
               </div>
             </div>
           </div>
@@ -559,13 +616,11 @@ export default function DashboardPage() {
           <h2 className="text-sm font-semibold text-[#8b949e] mb-3 flex flex-wrap items-center gap-2">
             <TrendingUp className="w-4 h-4 text-[#2dd4bf]" />
             Equity Curve
-            {state?.initialEquity != null && state.initialEquity > 0 && (
-              <span className="text-xs font-mono text-[#6e7681]">
-                Starting: ${state.initialEquity.toFixed(2)}
-              </span>
-            )}
+            <span className="text-xs font-mono text-[#6e7681]">
+              Starting: ${ACCOUNT_START_EQUITY} · Resolved only · Amber line = ATH
+            </span>
             <span className="text-xs font-normal text-[#6e7681]">
-              Drag to pan · Scroll to zoom · Full history
+              Drag to pan · Scroll to zoom
             </span>
           </h2>
           <div className="h-64 sm:h-72 min-h-[280px]">
@@ -619,21 +674,17 @@ export default function DashboardPage() {
 
           <section className="rounded-xl bg-[#161b22] border border-[#30363d] p-4 min-w-0">
             <h2 className="text-sm font-semibold text-[#8b949e] mb-3">Live prices</h2>
-            <div className="grid grid-cols-2 gap-3 sm:gap-4 text-sm">
-              <PriceRow label="YES" value={state?.yesPrice} priceToBeat={priceToBeat} />
-              <PriceRow label="NO" value={state?.noPrice} priceToBeat={priceToBeat} />
-              <PriceRow
-                label="Chainlink"
-                value={state?.chainlinkBtcPrice}
-                priceToBeat={priceToBeat}
-                isBtc
-              />
-              <PriceRow
-                label="Binance"
-                value={state?.btcPrice}
-                priceToBeat={priceToBeat}
-                isBtc
-              />
+            <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm min-w-0">
+              <div className="flex justify-between items-center gap-3 min-w-0">
+                <span className="text-[#8b949e] shrink-0 w-16">YES</span>
+                <span className="text-white font-mono text-right tabular-nums break-all">{state?.yesPrice != null ? state.yesPrice.toFixed(4) : "—"}</span>
+              </div>
+              <div className="flex justify-between items-center gap-3 min-w-0">
+                <span className="text-[#8b949e] shrink-0 w-16">NO</span>
+                <span className="text-white font-mono text-right tabular-nums break-all">{state?.noPrice != null ? state.noPrice.toFixed(4) : "—"}</span>
+              </div>
+              <PriceRow label="Chainlink" value={state?.chainlinkBtcPrice} priceToBeat={priceToBeat} isBtc />
+              <PriceRow label="Binance" value={state?.btcPrice} priceToBeat={priceToBeat} isBtc />
             </div>
           </section>
         </div>
@@ -644,11 +695,23 @@ export default function DashboardPage() {
             <Clock className="w-4 h-4 text-[#2dd4bf]" />
             Uptime
           </h2>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 text-sm">
-            <Stat label="Total uptime" value={formatDuration(state?.uptimeSeconds ?? 0)} />
-            <Stat label="Paused" value={formatDuration(state?.pausedSeconds ?? 0)} />
-            <Stat label="RTDS stale" value={formatDuration(state?.totalRtdsDownSeconds ?? 0)} />
-            <Stat label="No market" value={formatDuration(state?.totalNoMarketSeconds ?? 0)} />
+          <div className="grid grid-cols-4 gap-x-4 gap-y-2 text-sm items-baseline">
+            <div className="col-span-2 flex justify-between items-baseline gap-2">
+              <span className="text-[#8b949e] shrink-0">Total uptime:</span>
+              <span className="text-white font-mono tabular-nums">{formatDuration(state?.uptimeSeconds ?? 0)}</span>
+            </div>
+            <div className="col-span-2 flex justify-between items-baseline gap-2">
+              <span className="text-[#8b949e] shrink-0">Paused:</span>
+              <span className="text-white font-mono tabular-nums">{formatDuration(state?.pausedSeconds ?? 0)}</span>
+            </div>
+            <div className="col-span-2 flex justify-between items-baseline gap-2">
+              <span className="text-[#8b949e] shrink-0">RTDS stale:</span>
+              <span className="text-white font-mono tabular-nums">{formatDuration(state?.totalRtdsDownSeconds ?? 0)}</span>
+            </div>
+            <div className="col-span-2 flex justify-between items-baseline gap-2">
+              <span className="text-[#8b949e] shrink-0">No market:</span>
+              <span className="text-white font-mono tabular-nums">{formatDuration(state?.totalNoMarketSeconds ?? 0)}</span>
+            </div>
           </div>
           {state?.rtdsStale && (
             <p className="mt-2 flex items-center gap-1 text-amber-400 text-sm">
@@ -702,7 +765,7 @@ export default function DashboardPage() {
         <section className="rounded-xl bg-[#161b22] border border-[#30363d] overflow-hidden mb-6">
           <div className="flex flex-wrap items-center justify-between gap-2 p-4 pb-2">
             <h2 className="text-sm font-semibold text-[#8b949e]">
-              {localTrades.length > 0 ? "Bot trades" : "Closed markets (from API)"} — newest first, UTC
+              Trades — newest first, UTC
             </h2>
             {displayTrades.length > TRADES_PER_PAGE && (
               <div className="flex items-center gap-2 text-xs">
@@ -730,44 +793,44 @@ export default function DashboardPage() {
               </div>
             )}
           </div>
-          <div className="overflow-x-auto -mx-4 sm:mx-0">
+          <div className="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0">
             <table className="w-full text-sm min-w-[640px]">
               <thead>
                 <tr className="text-[#8b949e] border-b border-[#30363d]">
-                  <th className="text-left py-3 px-4">Date & Time (UTC)</th>
-                  <th className="text-left py-3 px-4">Market</th>
-                  <th className="text-left py-3 px-4">Side</th>
-                  <th className="text-right py-3 px-4">Entry</th>
-                  <th className="text-right py-3 px-4">Size</th>
-                  <th className="text-left py-3 px-4">Result</th>
-                  <th className="text-left py-3 px-4">Collected</th>
-                  <th className="text-right py-3 px-4">PnL</th>
-                  <th className="text-left py-3 px-4 max-w-[120px] truncate">Reason</th>
+                  <th className="text-left py-3 px-3 sm:px-4">Date & Time (UTC)</th>
+                  <th className="text-left py-3 px-3 sm:px-4">Market</th>
+                  <th className="text-left py-3 px-3 sm:px-4">Side</th>
+                  <th className="text-right py-3 px-3 sm:px-4">Entry</th>
+                  <th className="text-right py-3 px-3 sm:px-4">Size</th>
+                  <th className="text-left py-3 px-3 sm:px-4">Result</th>
+                  <th className="text-left py-3 px-3 sm:px-4">Collected</th>
+                  <th className="text-right py-3 px-3 sm:px-4">PnL</th>
+                  <th className="text-left py-3 px-3 sm:px-4 truncate">Reason</th>
                 </tr>
               </thead>
               <tbody>
                 {paginatedTrades.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="py-8 text-center text-[#6e7681]">
+                    <td colSpan={9} className="py-8 text-center text-[#6e7681] px-3 sm:px-4">
                       No trades yet.
                     </td>
                   </tr>
                 ) : (
                   paginatedTrades.map((t, i) => (
                     <tr key={`${t.timestamp}-${t.slug}-${i}`} className="border-b border-[#21262d] hover:bg-[#21262d]/50">
-                      <td className="py-2 px-4 text-[#e6edf3] whitespace-nowrap" title={formatUtc(parseTimestamp(t.timestamp), "datetime")}>
+                      <td className="py-2.5 px-3 sm:px-4 text-[#e6edf3] whitespace-nowrap" title={formatUtc(parseTimestamp(t.timestamp), "datetime")}>
                         {formatUtc(parseTimestamp(t.timestamp), "datetime")}
                       </td>
-                      <td className="py-2 px-4 font-mono text-sm truncate max-w-[140px]" title={t.slug}>
+                      <td className="py-2.5 px-3 sm:px-4 font-mono text-sm truncate" title={t.slug}>
                         {t.slug}
                       </td>
-                      <td className="py-2 px-4 font-mono">{t.side}</td>
-                      <td className="py-2 px-4 text-right">${t.entry_price.toFixed(2)}</td>
-                      <td className="py-2 px-4 text-right">${t.size_usdc.toFixed(2)}</td>
-                      <td className="py-2 px-4">
+                      <td className="py-2.5 px-3 sm:px-4 font-mono">{t.side}</td>
+                      <td className="py-2.5 px-3 sm:px-4 text-right tabular-nums">${t.entry_price.toFixed(2)}</td>
+                      <td className="py-2.5 px-3 sm:px-4 text-right tabular-nums">${t.size_usdc.toFixed(2)}</td>
+                      <td className="py-2.5 px-3 sm:px-4">
                         <ResultBadge result={t.result} />
                       </td>
-                      <td className="py-2 px-4">
+                      <td className="py-2.5 px-3 sm:px-4">
                         {t.redeemed ? (
                           <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-[#2dd4bf]/20 text-[#2dd4bf]">
                             Collected
@@ -783,13 +846,13 @@ export default function DashboardPage() {
                         )}
                       </td>
                       <td
-                        className={`py-2 px-4 text-right font-medium ${
+                        className={`py-2.5 px-3 sm:px-4 text-right font-medium tabular-nums ${
                           t.pnl_usdc >= 0 ? "text-[#2dd4bf]" : "text-[#f87171]"
                         }`}
                       >
                         {t.pnl_usdc >= 0 ? "+" : ""}${t.pnl_usdc.toFixed(2)}
                       </td>
-                      <td className="py-2 px-4 text-[#8b949e] max-w-[120px] truncate" title={t.reason}>
+                      <td className="py-2.5 px-3 sm:px-4 text-[#8b949e] truncate" title={t.reason}>
                         {t.reason || "—"}
                       </td>
                     </tr>
@@ -823,9 +886,9 @@ function PriceRow({
   const beat = priceToBeat ?? 0;
   const diff = isBtc && beat ? num - beat : 0;
   return (
-    <div className="flex justify-between items-center py-1.5 sm:py-2 gap-2 min-w-0">
-      <span className="text-[#8b949e] shrink-0">{label}</span>
-      <span className="text-white font-mono text-right break-all min-w-0">
+    <div className="flex justify-between items-center gap-3 min-w-0">
+      <span className="text-[#8b949e] shrink-0 w-16">{label}</span>
+      <span className="text-white font-mono text-right tabular-nums break-all min-w-0">
         {isBtc ? `$${num.toFixed(2)}` : num.toFixed(4)}
         {isBtc && beat !== 0 && (
           <span className={`ml-1 shrink-0 ${diff >= 0 ? "text-[#2dd4bf]" : "text-[#f87171]"}`}>
