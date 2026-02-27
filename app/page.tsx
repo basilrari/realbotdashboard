@@ -91,8 +91,8 @@ function formatLatencyMs(v: number | undefined | null): string {
   return `${v.toFixed(0)}ms`;
 }
 
-/** Start equity for the chart (112.64 so chart matches live balance + total PnL). */
-const CHART_START_EQUITY = 112.64;
+/** Start equity for the chart (110.51 so chart matches live balance + total PnL). */
+const CHART_START_EQUITY = 110.51;
 
 /** Build chart data from resolved trades only (WIN/LOSS). */
 function buildChartData(trades: TradeRecord[]): { data: LineData[]; ath: number } {
@@ -409,12 +409,12 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-[#0d1117] text-[#e6edf3] font-sans">
       <div className="max-w-6xl mx-auto px-3 py-4 sm:px-6 sm:py-6 lg:px-8">
         {/* Header */}
-        <header className="flex flex-wrap items-center justify-between gap-4 mb-6">
+        <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
           <div className="flex items-center gap-2">
             <BarChart3 className="w-8 h-8 text-[#2dd4bf]" />
             <h1 className="text-xl font-bold text-white">Polymarket Bot Dashboard</h1>
           </div>
-          <div className="flex items-center gap-3 text-sm text-[#8b949e]">
+          <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2 sm:gap-3 text-sm text-[#8b949e]">
             <span className="flex items-center gap-1">
               <RefreshCw className={`w-4 h-4 ${isAutoBurst ? "animate-spin" : ""}`} />
               Updated {lastUpdated ? formatUtc(lastUpdated, "time") : "—"}
