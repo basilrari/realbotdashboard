@@ -399,6 +399,32 @@ export default function DashboardPage() {
   const winRate = totalResolved > 0 ? (wins / totalResolved) * 100 : 0;
   const analyticsWinRate = state?.tradeWinRatePct ?? winRate;
 
+  // Current win streak: prefer backend metric when available; otherwise derive from analyticsTrades.
+  const currentWinStreakTrades =
+    state?.currentWinStreakTrades ??
+    (() => {
+      if (!Array.isArray(analyticsTrades) || analyticsTrades.length === 0) return 0;
+      const events = analyticsTrades
+        .map((t) => ({
+          ts: parseTimestamp(t.timestamp).getTime(),
+          result: (t.result ?? "").toString().toUpperCase(),
+        }))
+        .filter((e) => Number.isFinite(e.ts))
+        .sort((a, b) => a.ts - b.ts);
+      let streak = 0;
+      for (const e of events) {
+        if (e.result === "WIN") {
+          streak += 1;
+        } else if (e.result === "LOSS") {
+          streak = 0;
+        } else {
+          // TIMEOUT or other result: break the streak but don't count as a loss
+          streak = 0;
+        }
+      }
+      return streak;
+    })();
+
   const fmtUsd = (v: number | undefined | null, digits = 2) =>
     v == null ? "—" : `$${v.toFixed(digits)}`;
 
@@ -631,7 +657,7 @@ export default function DashboardPage() {
                 <div>
                   Current win streak:{" "}
                   <span className="text-white font-mono">
-                    {state?.currentWinStreakTrades ?? 0}
+                    {currentWinStreakTrades}
                   </span>{" "}
                   trades
                 </div>
