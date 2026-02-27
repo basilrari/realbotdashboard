@@ -18,3 +18,32 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, sans-serif;
 }
+
+/* Scrollbars: match dark UI (#161b22 cards, #30363d borders) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #6e7681 #21262d;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: #21262d;
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #6e7681;
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #8b949e;
+}
+
+*::-webkit-scrollbar-corner {
+  background: #21262d;
+}

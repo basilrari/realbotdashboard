@@ -56,52 +56,72 @@ function parseTimestamp(ts: string | number | undefined | null): Date {
   return Number.isNaN(d.getTime()) ? new Date(0) : d;
 }
 
+/** Format seconds as compact duration: s, m s, h m s, d h, or w d. Fits in UI and mobile. */
 function formatDuration(sec: number): string {
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
   const s = Math.floor(sec % 60);
-  if (h > 0) return `${h}h ${m}m ${s}s`;
-  if (m > 0) return `${m}m ${s}s`;
+  const m = Math.floor((sec / 60) % 60);
+  const h = Math.floor((sec / 3600) % 24);
+  const d = Math.floor(sec / 86400) % 7;
+  const w = Math.floor(sec / 604800);
+  if (w > 0) {
+    return d > 0 ? `${w}w ${d}d` : `${w}w`;
+  }
+  if (d > 0) {
+    return h > 0 ? `${d}d ${h}h` : `${d}d`;
+  }
+  if (h > 0) {
+    const parts = [`${h}h`];
+    if (m > 0) parts.push(`${m}m`);
+    if (s > 0) parts.push(`${s}s`);
+    return parts.join(" ");
+  }
+  if (m > 0) {
+    return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  }
   return `${s}s`;
 }
 
-/** Account starting equity (hardcoded). */
+/** Account starting equity (fallback when no history). */
 const ACCOUNT_START_EQUITY = 109;
 
-/** Build chart data from resolved trades only (WIN/LOSS). Points added only after outcome is confirmed. */
+/** Build chart data from resolved trades only (WIN/LOSS). No artificial start point that causes a dip. */
 function buildChartData(
   trades: TradeRecord[],
   _stateEquity: number,
   _livePnl: number,
-  _initialEquity: number | undefined,
-  updatedAt: string,
-  uptimeSeconds: number
+  initialEquity: number | undefined,
+  _updatedAt: string,
+  _uptimeSeconds: number
 ): { data: LineData[]; ath: number } {
-  const startEquity = ACCOUNT_START_EQUITY;
+  const startEquity = initialEquity != null && initialEquity > 0 ? initialEquity : ACCOUNT_START_EQUITY;
   const nowSec = Math.floor(Date.now() / 1000);
-  const updatedSec = Math.floor(new Date(updatedAt || 0).getTime() / 1000);
-  const startSec = Math.max(updatedSec - uptimeSeconds, updatedSec - 86400 * 365);
-  const out: LineData[] = [{ time: startSec as UTCTimestamp, value: startEquity }];
   const resolved = trades.filter(
     (t) => t.result === "WIN" || t.result === "LOSS"
   );
   const sorted = [...resolved].sort(
     (a, b) => parseTimestamp(a.timestamp).getTime() - parseTimestamp(b.timestamp).getTime()
   );
+  const out: LineData[] = [];
   let running = startEquity;
   let ath = startEquity;
-  for (const t of sorted) {
-    const p = Number(t.pnl_usdc);
-    if (!Number.isFinite(p)) continue;
-    running += p;
-    if (running > ath) ath = running;
-    const ts = Math.floor(parseTimestamp(t.timestamp).getTime() / 1000);
-    if (!Number.isFinite(running) || !Number.isFinite(ts)) continue;
-    out.push({ time: ts as UTCTimestamp, value: running });
-  }
-  // Extend flat to now so we don't show temporary drawdown from open positions
-  if (out.length >= 1 && out[out.length - 1].time !== nowSec) {
-    out.push({ time: nowSec as UTCTimestamp, value: running });
+  if (sorted.length === 0) {
+    out.push({ time: (nowSec - 1) as UTCTimestamp, value: startEquity });
+    out.push({ time: nowSec as UTCTimestamp, value: startEquity });
+  } else {
+    const firstTs = Math.floor(parseTimestamp(sorted[0].timestamp).getTime() / 1000);
+    out.push({ time: (firstTs - 1) as UTCTimestamp, value: startEquity });
+    for (const t of sorted) {
+      const p = Number(t.pnl_usdc);
+      if (!Number.isFinite(p)) continue;
+      running += p;
+      if (running > ath) ath = running;
+      const ts = Math.floor(parseTimestamp(t.timestamp).getTime() / 1000);
+      if (!Number.isFinite(running) || !Number.isFinite(ts)) continue;
+      out.push({ time: ts as UTCTimestamp, value: running });
+    }
+    if (out[out.length - 1].time !== nowSec) {
+      out.push({ time: nowSec as UTCTimestamp, value: running });
+    }
   }
   const valid = out.filter((d) => d != null && Number.isFinite(d.value) && d.time != null);
   const seen = new Map<number, LineData>();
@@ -617,7 +637,7 @@ export default function DashboardPage() {
             <TrendingUp className="w-4 h-4 text-[#2dd4bf]" />
             Equity Curve
             <span className="text-xs font-mono text-[#6e7681]">
-              Starting: ${ACCOUNT_START_EQUITY} · Resolved only · Amber line = ATH
+              Resolved only · Amber line = ATH
             </span>
             <span className="text-xs font-normal text-[#6e7681]">
               Drag to pan · Scroll to zoom
@@ -805,13 +825,12 @@ export default function DashboardPage() {
                   <th className="text-left py-3 px-3 sm:px-4">Result</th>
                   <th className="text-left py-3 px-3 sm:px-4">Collected</th>
                   <th className="text-right py-3 px-3 sm:px-4">PnL</th>
-                  <th className="text-left py-3 px-3 sm:px-4 truncate">Reason</th>
                 </tr>
               </thead>
               <tbody>
                 {paginatedTrades.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="py-8 text-center text-[#6e7681] px-3 sm:px-4">
+                    <td colSpan={8} className="py-8 text-center text-[#6e7681] px-3 sm:px-4">
                       No trades yet.
                     </td>
                   </tr>
@@ -851,9 +870,6 @@ export default function DashboardPage() {
                         }`}
                       >
                         {t.pnl_usdc >= 0 ? "+" : ""}${t.pnl_usdc.toFixed(2)}
-                      </td>
-                      <td className="py-2.5 px-3 sm:px-4 text-[#8b949e] truncate" title={t.reason}>
-                        {t.reason || "—"}
                       </td>
                     </tr>
                   ))
