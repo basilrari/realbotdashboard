@@ -959,7 +959,7 @@ export default function DashboardPage() {
                       <td className="py-2.5 px-3 sm:px-4 w-[110px]">
                         <ResultBadge
                           result={
-                            t.redeemed && t.result === "PENDING" ? "COLLECTED" : t.result
+                            t.redeemed && t.result === "PENDING" ? "WAITING" : t.result
                           }
                         />
                       </td>
