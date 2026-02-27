@@ -81,18 +81,11 @@ function formatDuration(sec: number): string {
   return `${s}s`;
 }
 
-/** Account starting equity for the chart (hardcoded, not from backend/state). */
-const CHART_START_EQUITY = 111;
+/** Start equity for the chart (112.64 so chart matches live balance + total PnL). */
+const CHART_START_EQUITY = 112.64;
 
-/** Build chart data from resolved trades only (WIN/LOSS). No artificial start point that causes a dip. */
-function buildChartData(
-  trades: TradeRecord[],
-  _stateEquity: number,
-  _livePnl: number,
-  _initialEquity: number | undefined,
-  _updatedAt: string,
-  _uptimeSeconds: number
-): { data: LineData[]; ath: number } {
+/** Build chart data from resolved trades only (WIN/LOSS). */
+function buildChartData(trades: TradeRecord[]): { data: LineData[]; ath: number } {
   const startEquity = CHART_START_EQUITY;
   const nowSec = Math.floor(Date.now() / 1000);
   const resolved = trades.filter(
@@ -140,14 +133,11 @@ export type EquityChartHandle = { resetView: () => void };
 /** TradingView-style equity chart: scroll (drag) and zoom (mouse wheel). Preserves user position; updates at most every 5 min or when market changes. */
 const EquityChart = forwardRef<EquityChartHandle, {
   trades: TradeRecord[];
-  stateEquity: number;
-  livePnl: number;
-  initialEquity?: number;
   updatedAt: string;
   uptimeSeconds: number;
   marketSlug?: string | null;
 }>(function EquityChart(
-  { trades, stateEquity, livePnl, initialEquity, updatedAt, uptimeSeconds, marketSlug },
+  { trades, updatedAt, uptimeSeconds, marketSlug },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -231,14 +221,7 @@ const EquityChart = forwardRef<EquityChartHandle, {
     lastApplyRef.current = now;
     lastMarketSlugRef.current = slug;
 
-    const { data, ath } = buildChartData(
-      trades,
-      stateEquity,
-      livePnl,
-      initialEquity,
-      updatedAt,
-      uptimeSeconds
-    );
+    const { data, ath } = buildChartData(trades);
     if (data.length < 2) {
       const fallback = [
         { time: Math.floor(Date.now() / 1000) as UTCTimestamp, value: CHART_START_EQUITY },
@@ -273,7 +256,7 @@ const EquityChart = forwardRef<EquityChartHandle, {
       chart.timeScale().fitContent();
       firstFitDoneRef.current = true;
     }
-  }, [trades, stateEquity, livePnl, initialEquity, updatedAt, uptimeSeconds, marketSlug]);
+  }, [trades, updatedAt, uptimeSeconds, marketSlug]);
 
   return <div ref={containerRef} className="w-full h-full min-h-[280px]" />;
 });
@@ -678,13 +661,6 @@ export default function DashboardPage() {
             <EquityChart
               ref={equityChartRef}
               trades={trades}
-              stateEquity={state?.equity ?? 0}
-              livePnl={
-                localTrades.length > 0
-                  ? (state?.livePnl ?? 0)
-                  : (state?.totalRealizedPnlUsdc ?? state?.livePnl ?? 0)
-              }
-              initialEquity={state?.initialEquity}
               updatedAt={state?.updatedAt ?? new Date().toISOString()}
               uptimeSeconds={state?.uptimeSeconds ?? 0}
               marketSlug={state?.currentMarket?.slug}
