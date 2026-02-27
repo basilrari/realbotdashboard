@@ -741,6 +741,18 @@ export default function DashboardPage() {
               <span className="text-[#8b949e] shrink-0">No market:</span>
               <span className="text-white font-mono tabular-nums">{formatDuration(state?.totalNoMarketSeconds ?? 0)}</span>
             </div>
+            <div className="col-span-2 flex justify-between items-baseline gap-2" title="Hot path latency (updated every 30 min)">
+              <span className="text-[#8b949e] shrink-0">Latency p50:</span>
+              <span className="text-white font-mono tabular-nums">{state?.hotPathP50Ms != null ? `${state.hotPathP50Ms}ms` : "—"}</span>
+            </div>
+            <div className="col-span-2 flex justify-between items-baseline gap-2" title="Hot path latency (updated every 30 min)">
+              <span className="text-[#8b949e] shrink-0">Latency p95:</span>
+              <span className="text-white font-mono tabular-nums">{state?.hotPathP95Ms != null ? `${state.hotPathP95Ms}ms` : "—"}</span>
+            </div>
+            <div className="col-span-2 flex justify-between items-baseline gap-2" title="Hot path latency (updated every 30 min)">
+              <span className="text-[#8b949e] shrink-0">Latency p99:</span>
+              <span className="text-white font-mono tabular-nums">{state?.hotPathP99Ms != null ? `${state.hotPathP99Ms}ms` : "—"}</span>
+            </div>
           </div>
           {state?.rtdsStale && (
             <p className="mt-2 flex items-center gap-1 text-amber-400 text-sm">
@@ -827,7 +839,6 @@ export default function DashboardPage() {
               <thead>
                 <tr className="text-[#8b949e] border-b border-[#30363d]">
                   <th className="text-left py-3 px-3 sm:px-4">Date & Time (UTC)</th>
-                  <th className="text-left py-3 px-3 sm:px-4">Market</th>
                   <th className="text-left py-3 px-3 sm:px-4">Side</th>
                   <th className="text-right py-3 px-3 sm:px-4">Entry</th>
                   <th className="text-right py-3 px-3 sm:px-4">Size</th>
@@ -839,7 +850,7 @@ export default function DashboardPage() {
               <tbody>
                 {paginatedTrades.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="py-8 text-center text-[#6e7681] px-3 sm:px-4">
+                    <td colSpan={7} className="py-8 text-center text-[#6e7681] px-3 sm:px-4">
                       No trades yet.
                     </td>
                   </tr>
@@ -848,9 +859,6 @@ export default function DashboardPage() {
                     <tr key={`${t.timestamp}-${t.slug}-${i}`} className="border-b border-[#21262d] hover:bg-[#21262d]/50">
                       <td className="py-2.5 px-3 sm:px-4 text-[#e6edf3] whitespace-nowrap" title={formatUtc(parseTimestamp(t.timestamp), "datetime")}>
                         {formatUtc(parseTimestamp(t.timestamp), "datetime")}
-                      </td>
-                      <td className="py-2.5 px-3 sm:px-4 font-mono text-sm truncate" title={t.slug}>
-                        {t.slug}
                       </td>
                       <td className="py-2.5 px-3 sm:px-4 font-mono">{t.side}</td>
                       <td className="py-2.5 px-3 sm:px-4 text-right tabular-nums">${t.entry_price.toFixed(2)}</td>
