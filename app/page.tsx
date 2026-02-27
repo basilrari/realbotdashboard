@@ -416,6 +416,9 @@ export default function DashboardPage() {
     safePage * TRADES_PER_PAGE,
     (safePage + 1) * TRADES_PER_PAGE
   );
+  const hasCollectedPending = displayTrades.some(
+    (t) => t.redeemed && t.result === "PENDING",
+  );
 
   const startOfDayEquity =
     state?.startOfDayEquity ?? state?.initialEquity ?? state?.equity ?? 0;
@@ -891,7 +894,7 @@ export default function DashboardPage() {
 
         {/* Trades */}
         <section className="rounded-xl bg-[#161b22] border border-[#30363d] overflow-hidden mb-6">
-          <div className="flex flex-wrap items-center justify-between gap-2 p-4 pb-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 p-4 pb-1">
             <h2 className="text-sm font-semibold text-[#8b949e]">
               Trades — newest first, UTC
             </h2>
@@ -921,6 +924,19 @@ export default function DashboardPage() {
               </div>
             )}
           </div>
+          {hasCollectedPending && (
+            <div className="px-4 pb-2 text-xs text-[#8b949e]">
+              <span className="inline-flex items-center gap-1 rounded-md bg-[#0d1117]/80 px-2 py-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#2dd4bf]" />
+                <span>
+                  Some trades are <span className="font-semibold text-[#e6edf3]">Collected</span> but
+                  still <span className="font-semibold text-[#e6edf3]">Pending</span> — equity has
+                  updated from redemption, and PnL will update once Polymarket analytics reports the
+                  final result.
+                </span>
+              </span>
+            </div>
+          )}
           <div className="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0">
             <table className="w-full text-sm min-w-[720px]">
               <thead>
@@ -957,37 +973,16 @@ export default function DashboardPage() {
                         ${t.size_usdc.toFixed(2)}
                       </td>
                       <td className="py-2.5 px-3 sm:px-4 w-[110px]">
-                        <ResultBadge
-                          result={
-                            t.redeemed && t.result === "PENDING" ? "WAITING" : t.result
-                          }
-                        />
+                        <ResultBadge result={t.result} />
                       </td>
                       <td className="py-2.5 px-3 sm:px-4 w-[170px]">
-                        {t.redeemed && t.result === "PENDING" ? (
-                          <span
-                            className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-[#2dd4bf]/20 text-[#2dd4bf]"
-                            title={`Equity updated from redemption; waiting for Polymarket PnL data (${formatDuration(
-                              Math.min(
-                                600,
-                                Math.max(
-                                  0,
-                                  Math.floor(
-                                    (Date.now() - parseTimestamp(t.timestamp).getTime()) / 1000,
-                                  ),
-                                ),
-                              ),
-                            )})`}
-                          >
+                        {t.redeemed ? (
+                          <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-[#2dd4bf]/20 text-[#2dd4bf]">
                             Collected
                           </span>
                         ) : t.result === "PENDING" ? (
                           <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-[#6e7681]/20 text-[#8b949e]">
                             Pending
-                          </span>
-                        ) : t.redeemed ? (
-                          <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-[#2dd4bf]/20 text-[#2dd4bf]">
-                            Collected
                           </span>
                         ) : (
                           <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-[#6e7681]/20 text-[#8b949e]">
@@ -1067,9 +1062,7 @@ function ResultBadge({ result }: { result: string }) {
       ? "bg-[#2dd4bf]/20 text-[#2dd4bf]"
       : upper === "LOSS"
         ? "bg-[#f87171]/20 text-[#f87171]"
-        : upper === "COLLECTED"
-          ? "bg-[#2dd4bf]/20 text-[#2dd4bf]"
-          : "bg-[#6e7681]/20 text-[#8b949e]";
+        : "bg-[#6e7681]/20 text-[#8b949e]";
   return (
     <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${style}`}>
       {upper}
