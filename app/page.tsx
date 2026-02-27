@@ -587,7 +587,12 @@ export default function DashboardPage() {
               <div className="flex justify-between items-baseline gap-2" title="When the current 8h loss-limit window started">
                 <span className="shrink-0">Last reset</span>
                 <span className="text-white font-mono break-all text-right">
-                  {lossLimitResetAt ? formatUtc(parseTimestamp(lossLimitResetAt), "date") : "—"}
+                  {lossLimitResetAt
+                    ? `${formatUtc(parseTimestamp(lossLimitResetAt), "date")} ${formatUtc(
+                        parseTimestamp(lossLimitResetAt),
+                        "time",
+                      )}`
+                    : "—"}
                 </span>
               </div>
               <div className="flex justify-between items-baseline gap-2" title="USDC allowance for CLOB; refreshed hourly">
@@ -956,11 +961,7 @@ export default function DashboardPage() {
                       <td className="py-2.5 px-3 sm:px-4 text-right tabular-nums">${t.entry_price.toFixed(2)}</td>
                       <td className="py-2.5 px-3 sm:px-4 text-right tabular-nums">${t.size_usdc.toFixed(2)}</td>
                       <td className="py-2.5 px-3 sm:px-4">
-                        <ResultBadge
-                          result={
-                            t.redeemed && t.result === "PENDING" ? "COLLECTED" : t.result
-                          }
-                        />
+                        <ResultBadge result={t.result} />
                       </td>
                       <td className="py-2.5 px-3 sm:px-4">
                         {t.redeemed ? (
@@ -977,12 +978,16 @@ export default function DashboardPage() {
                           </span>
                         )}
                       </td>
-                      <td
-                        className={`py-2.5 px-3 sm:px-4 text-right font-medium tabular-nums ${
-                          t.pnl_usdc >= 0 ? "text-[#2dd4bf]" : "text-[#f87171]"
-                        }`}
-                      >
-                        {t.pnl_usdc >= 0 ? "+" : ""}${t.pnl_usdc.toFixed(2)}
+                      <td className="py-2.5 px-3 sm:px-4 text-right font-medium tabular-nums">
+                        {t.redeemed && t.result === "PENDING" ? (
+                          <span className="text-[#6e7681]">—</span>
+                        ) : (
+                          <span
+                            className={t.pnl_usdc >= 0 ? "text-[#2dd4bf]" : "text-[#f87171]"}
+                          >
+                            {t.pnl_usdc >= 0 ? "+" : ""}${t.pnl_usdc.toFixed(2)}
+                          </span>
+                        )}
                       </td>
                     </tr>
                   ))
