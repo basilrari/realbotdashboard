@@ -396,8 +396,6 @@ export default function DashboardPage() {
   const wins = state?.resolvedWinCount ?? localTrades.filter((t) => t.result === "WIN").length;
   const losses = state?.resolvedLossCount ?? localTrades.filter((t) => t.result === "LOSS").length;
   const totalResolved = wins + losses;
-  // Use merged trades (local + analytics), so PnL reflects resolved positions even after restarts.
-  const livePnlFromTrades = trades.reduce((sum, t) => sum + (t.pnl_usdc ?? 0), 0);
   const winRate = totalResolved > 0 ? (wins / totalResolved) * 100 : 0;
   const analyticsWinRate = state?.tradeWinRatePct ?? winRate;
 
@@ -464,7 +462,7 @@ export default function DashboardPage() {
           </div>
         </header>
 
-        {/* Live Equity + PnL */}
+        {/* Live Equity + Risk + Win rate */}
         <section className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
           <div className="rounded-xl bg-[#161b22] border border-[#30363d] p-5 transition-transform duration-200 hover:-translate-y-0.5">
             <p className="text-[#8b949e] text-sm mb-1">Live Equity</p>
@@ -489,18 +487,18 @@ export default function DashboardPage() {
           </div>
           <div
             className="rounded-xl bg-[#161b22] border border-[#30363d] p-5 transition-transform duration-200 hover:-translate-y-0.5"
-            title="Sum of PnL from bot's local trades (this session). Use Total PnL (realized) for all-time."
+            title="33% loss limit per 8h UTC window. Shows how much of the cap is used."
           >
-            <p className="text-[#8b949e] text-sm mb-1">Live PnL (session)</p>
-            <p
-              className={`text-3xl font-bold ${
-                livePnlFromTrades >= 0 ? "text-[#2dd4bf]" : "text-[#f87171]"
-              }`}
-            >
-              {livePnlFromTrades >= 0 ? "+" : ""}
-              ${livePnlFromTrades.toFixed(2)}
+            <p className="text-[#8b949e] text-sm mb-1">Risk guard · 33% loss limit</p>
+            <p className="text-3xl font-bold text-white">
+              {maxDailyLoss > 0 ? `${((lossLimitUsed / maxDailyLoss) * 100).toFixed(1)}%` : "0%"}
             </p>
-            <p className="text-xs text-[#6e7681] mt-0.5">Bot trades this session</p>
+            <p className="text-xs text-[#6e7681] mt-0.5">
+              Used{" "}
+              <span className="text-white font-mono">
+                {fmtUsd(lossLimitUsed)} / {fmtUsd(maxDailyLoss)}
+              </span>
+            </p>
           </div>
           <div className="rounded-xl bg-[#161b22] border border-[#30363d] p-5 transition-transform duration-200 hover:-translate-y-0.5">
             <p className="text-[#8b949e] text-sm mb-1">Win rate · Resolved trades</p>
@@ -964,13 +962,32 @@ export default function DashboardPage() {
                         <ResultBadge result={t.result} />
                       </td>
                       <td className="py-2.5 px-3 sm:px-4">
-                        {t.redeemed ? (
-                          <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-[#2dd4bf]/20 text-[#2dd4bf]">
-                            Collected
+                        {t.redeemed && t.result === "PENDING" ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-[#2dd4bf]/20 text-[#2dd4bf]">
+                            <span>Collected</span>
+                            <span className="text-[10px] text-[#8b949e]">
+                              waiting for Polymarket data (
+                              {formatDuration(
+                                Math.min(
+                                  600,
+                                  Math.max(
+                                    0,
+                                    Math.floor(
+                                      (Date.now() - parseTimestamp(t.timestamp).getTime()) / 1000,
+                                    ),
+                                  ),
+                                ),
+                              )}
+                              )
+                            </span>
                           </span>
                         ) : t.result === "PENDING" ? (
                           <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-[#6e7681]/20 text-[#8b949e]">
                             Pending
+                          </span>
+                        ) : t.redeemed ? (
+                          <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-[#2dd4bf]/20 text-[#2dd4bf]">
+                            Collected
                           </span>
                         ) : (
                           <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-[#6e7681]/20 text-[#8b949e]">
