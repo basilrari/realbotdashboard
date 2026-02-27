@@ -81,6 +81,16 @@ function formatDuration(sec: number): string {
   return `${s}s`;
 }
 
+/** Pretty-print latency in ms with sub-ms support (e.g. 0.250ms, 2.34ms). */
+function formatLatencyMs(v: number | undefined | null): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  if (v < 0.001) return "<0.001ms";
+  if (v < 1) return `${(v).toFixed(3)}ms`;
+  if (v < 10) return `${v.toFixed(2)}ms`;
+  if (v < 100) return `${v.toFixed(1)}ms`;
+  return `${v.toFixed(0)}ms`;
+}
+
 /** Start equity for the chart (112.64 so chart matches live balance + total PnL). */
 const CHART_START_EQUITY = 112.64;
 
@@ -437,6 +447,10 @@ export default function DashboardPage() {
             <p className="text-3xl font-bold text-white">
               ${(state?.equity ?? 0).toFixed(2)}
             </p>
+            <p className="text-xs text-[#6e7681] mt-0.5">
+              Start equity:&nbsp;
+              <span className="text-white font-mono">${CHART_START_EQUITY.toFixed(2)}</span>
+            </p>
           </div>
           <div
             className="rounded-xl bg-[#161b22] border border-[#30363d] p-5 transition-transform duration-200 hover:-translate-y-0.5"
@@ -635,6 +649,34 @@ export default function DashboardPage() {
           </div>
         </section>
 
+        {/* Bot performance — hot path latency */}
+        <section className="rounded-xl bg-[#161b22] border border-[#30363d] p-4 mb-6">
+          <h2 className="text-sm font-semibold text-[#8b949e] mb-3 flex items-center gap-2">
+            <Activity className="w-4 h-4 text-[#2dd4bf]" />
+            Bot performance
+          </h2>
+          <p className="text-xs text-[#6e7681] mb-3">
+            Time from a Polymarket orderbook (CLOB) update until the bot finishes its trading logic and places any order; p50/p95/p99 are median and 95th/99th percentile latencies in ms (lower is better).
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+            <div className="flex justify-between sm:flex-col sm:gap-0.5 rounded-lg bg-[#0d1117]/60 px-3 py-2">
+              <span className="text-[#8b949e]">p50 (median)</span>
+              <span className="text-white font-mono tabular-nums">{formatLatencyMs(state?.hotPathP50Ms)}</span>
+            </div>
+            <div className="flex justify-between sm:flex-col sm:gap-0.5 rounded-lg bg-[#0d1117]/60 px-3 py-2">
+              <span className="text-[#8b949e]">p95</span>
+              <span className="text-white font-mono tabular-nums">{formatLatencyMs(state?.hotPathP95Ms)}</span>
+            </div>
+            <div className="flex justify-between sm:flex-col sm:gap-0.5 rounded-lg bg-[#0d1117]/60 px-3 py-2">
+              <span className="text-[#8b949e]">p99</span>
+              <span className="text-white font-mono tabular-nums">{formatLatencyMs(state?.hotPathP99Ms)}</span>
+            </div>
+          </div>
+          <p className="text-xs text-[#6e7681] mt-2">
+            Latency stats refreshed every 30 min on the bot. Dashboard last updated: {state?.updatedAt ? formatUtc(new Date(state.updatedAt), "datetime") : "—"}
+          </p>
+        </section>
+
         {/* Equity Curve — cumulative PnL over time */}
         <section
           className="rounded-xl bg-[#161b22] border border-[#30363d] p-4 mb-6"
@@ -740,18 +782,6 @@ export default function DashboardPage() {
             <div className="col-span-2 flex justify-between items-baseline gap-2">
               <span className="text-[#8b949e] shrink-0">No market:</span>
               <span className="text-white font-mono tabular-nums">{formatDuration(state?.totalNoMarketSeconds ?? 0)}</span>
-            </div>
-            <div className="col-span-2 flex justify-between items-baseline gap-2" title="Hot path latency (updated every 30 min)">
-              <span className="text-[#8b949e] shrink-0">Latency p50:</span>
-              <span className="text-white font-mono tabular-nums">{state?.hotPathP50Ms != null ? `${state.hotPathP50Ms}ms` : "—"}</span>
-            </div>
-            <div className="col-span-2 flex justify-between items-baseline gap-2" title="Hot path latency (updated every 30 min)">
-              <span className="text-[#8b949e] shrink-0">Latency p95:</span>
-              <span className="text-white font-mono tabular-nums">{state?.hotPathP95Ms != null ? `${state.hotPathP95Ms}ms` : "—"}</span>
-            </div>
-            <div className="col-span-2 flex justify-between items-baseline gap-2" title="Hot path latency (updated every 30 min)">
-              <span className="text-[#8b949e] shrink-0">Latency p99:</span>
-              <span className="text-white font-mono tabular-nums">{state?.hotPathP99Ms != null ? `${state.hotPathP99Ms}ms` : "—"}</span>
             </div>
           </div>
           {state?.rtdsStale && (
