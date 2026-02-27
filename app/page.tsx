@@ -81,19 +81,19 @@ function formatDuration(sec: number): string {
   return `${s}s`;
 }
 
-/** Account starting equity (fallback when no history). */
-const ACCOUNT_START_EQUITY = 109;
+/** Account starting equity for the chart (hardcoded, not from backend/state). */
+const CHART_START_EQUITY = 111;
 
 /** Build chart data from resolved trades only (WIN/LOSS). No artificial start point that causes a dip. */
 function buildChartData(
   trades: TradeRecord[],
   _stateEquity: number,
   _livePnl: number,
-  initialEquity: number | undefined,
+  _initialEquity: number | undefined,
   _updatedAt: string,
   _uptimeSeconds: number
 ): { data: LineData[]; ath: number } {
-  const startEquity = initialEquity != null && initialEquity > 0 ? initialEquity : ACCOUNT_START_EQUITY;
+  const startEquity = CHART_START_EQUITY;
   const nowSec = Math.floor(Date.now() / 1000);
   const resolved = trades.filter(
     (t) => t.result === "WIN" || t.result === "LOSS"
@@ -216,14 +216,14 @@ function EquityChart({
     );
     if (data.length < 2) {
       const fallback = [
-        { time: Math.floor(Date.now() / 1000) as UTCTimestamp, value: ACCOUNT_START_EQUITY },
-        { time: (Math.floor(Date.now() / 1000) + 1) as UTCTimestamp, value: ACCOUNT_START_EQUITY },
+        { time: Math.floor(Date.now() / 1000) as UTCTimestamp, value: CHART_START_EQUITY },
+        { time: (Math.floor(Date.now() / 1000) + 1) as UTCTimestamp, value: CHART_START_EQUITY },
       ];
       series.setData(fallback);
       if (athSeriesRef.current) {
         athSeriesRef.current.setData([
-          { time: fallback[0].time, value: ACCOUNT_START_EQUITY },
-          { time: fallback[1].time, value: ACCOUNT_START_EQUITY },
+          { time: fallback[0].time, value: CHART_START_EQUITY },
+          { time: fallback[1].time, value: CHART_START_EQUITY },
         ]);
       }
     } else {
