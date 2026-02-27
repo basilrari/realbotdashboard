@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useImperativeHandle, useRef, useState, forwardRef } from "react";
 import {
   TrendingUp,
   Activity,
@@ -133,26 +133,38 @@ function buildChartData(
   return { data, ath: Math.max(ath, maxVal) };
 }
 
-/** TradingView-style equity chart: scroll (drag) and zoom (mouse wheel). Uses full history. */
-function EquityChart({
-  trades,
-  stateEquity,
-  livePnl,
-  initialEquity,
-  updatedAt,
-  uptimeSeconds,
-}: {
+const CHART_UPDATE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+
+export type EquityChartHandle = { resetView: () => void };
+
+/** TradingView-style equity chart: scroll (drag) and zoom (mouse wheel). Preserves user position; updates at most every 5 min or when market changes. */
+const EquityChart = forwardRef<EquityChartHandle, {
   trades: TradeRecord[];
   stateEquity: number;
   livePnl: number;
   initialEquity?: number;
   updatedAt: string;
   uptimeSeconds: number;
-}) {
+  marketSlug?: string | null;
+}>(function EquityChart(
+  { trades, stateEquity, livePnl, initialEquity, updatedAt, uptimeSeconds, marketSlug },
+  ref
+) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const athSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const lastApplyRef = useRef<number>(0);
+  const lastMarketSlugRef = useRef<string | null>(null);
+  const firstFitDoneRef = useRef(false);
+
+  useImperativeHandle(ref, () => ({
+    resetView() {
+      if (chartRef.current) {
+        chartRef.current.timeScale().fitContent();
+      }
+    },
+  }), []);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -206,6 +218,19 @@ function EquityChart({
     const chart = chartRef.current;
     const series = seriesRef.current;
     if (!chart || !series) return;
+
+    const now = Date.now();
+    const slug = marketSlug ?? null;
+    const shouldUpdate =
+      lastApplyRef.current === 0 ||
+      now - lastApplyRef.current >= CHART_UPDATE_INTERVAL_MS ||
+      lastMarketSlugRef.current !== slug;
+
+    if (!shouldUpdate) return;
+
+    lastApplyRef.current = now;
+    lastMarketSlugRef.current = slug;
+
     const { data, ath } = buildChartData(
       trades,
       stateEquity,
@@ -236,24 +261,22 @@ function EquityChart({
         const athSeries = chart.addSeries(LineSeries, {
           color: "rgba(251, 191, 36, 0.8)",
           lineWidth: 1,
-          lineStyle: 2, // dashed
+          lineStyle: 2,
           priceFormat: { type: "price", precision: 2, minMove: 0.01 },
         });
         athSeriesRef.current = athSeries as ISeriesApi<"Line">;
       }
       athSeriesRef.current.setData(athData);
     }
-    chart.timeScale().fitContent();
-  }, [trades, stateEquity, livePnl, initialEquity, updatedAt, uptimeSeconds]);
 
-  useEffect(() => {
-    return () => {
-      athSeriesRef.current = null;
-    };
-  }, []);
+    if (!firstFitDoneRef.current) {
+      chart.timeScale().fitContent();
+      firstFitDoneRef.current = true;
+    }
+  }, [trades, stateEquity, livePnl, initialEquity, updatedAt, uptimeSeconds, marketSlug]);
 
   return <div ref={containerRef} className="w-full h-full min-h-[280px]" />;
-}
+});
 
 export default function DashboardPage() {
   const [state, setState] = useState<LiveState | null>(null);
@@ -261,6 +284,7 @@ export default function DashboardPage() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [isAutoBurst, setIsAutoBurst] = useState<boolean>(false);
   const [tradesPage, setTradesPage] = useState(0);
+  const equityChartRef = useRef<EquityChartHandle>(null);
 
   const load = useCallback(async () => {
     try {
@@ -642,9 +666,17 @@ export default function DashboardPage() {
             <span className="text-xs font-normal text-[#6e7681]">
               Drag to pan · Scroll to zoom
             </span>
+            <button
+              type="button"
+              onClick={() => equityChartRef.current?.resetView()}
+              className="ml-auto text-xs px-2 py-1 rounded bg-[#21262d] text-[#8b949e] hover:bg-[#30363d] hover:text-[#e6edf3] border border-[#30363d]"
+            >
+              Reset chart
+            </button>
           </h2>
           <div className="h-64 sm:h-72 min-h-[280px]">
             <EquityChart
+              ref={equityChartRef}
               trades={trades}
               stateEquity={state?.equity ?? 0}
               livePnl={
@@ -655,6 +687,7 @@ export default function DashboardPage() {
               initialEquity={state?.initialEquity}
               updatedAt={state?.updatedAt ?? new Date().toISOString()}
               uptimeSeconds={state?.uptimeSeconds ?? 0}
+              marketSlug={state?.currentMarket?.slug}
             />
           </div>
         </section>
