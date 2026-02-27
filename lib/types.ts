@@ -57,10 +57,16 @@ export interface LiveState {
   equity: number;
   /** Initial equity when bot started. Chart baseline. */
   initialEquity?: number;
-   /** Daily loss limit as a fraction of start-of-day equity (e.g. 0.33 = 33%). */
+   /** Loss limit as a fraction of window-start equity (e.g. 0.33 = 33% per 8h). */
   dailyLossLimit?: number;
-  /** Equity at start of current UTC day. */
+  /** Equity at start of current 8h loss-limit window. */
   startOfDayEquity?: number;
+  /** When the current 8h loss-limit window started (ISO8601). */
+  lossLimitResetAt?: string | null;
+  /** Max loss allowed in this window (33% of window-start equity). */
+  lossLimitMaxUsdc?: number;
+  /** How much of that limit has been used in this window. */
+  lossLimitUsedUsdc?: number;
   /** CLOB USDC spending approval (allowance); refreshed hourly. */
   clobSpendingApprovalUsdc?: number;
   livePnl: number;

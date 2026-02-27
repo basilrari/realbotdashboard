@@ -315,7 +315,9 @@ export default function DashboardPage() {
   const startOfDayEquity =
     state?.startOfDayEquity ?? state?.initialEquity ?? state?.equity ?? 0;
   const dailyLossLimit = state?.dailyLossLimit ?? 0;
-  const maxDailyLoss = startOfDayEquity * dailyLossLimit;
+  const maxDailyLoss = state?.lossLimitMaxUsdc ?? startOfDayEquity * dailyLossLimit;
+  const lossLimitUsed = state?.lossLimitUsedUsdc ?? 0;
+  const lossLimitResetAt = state?.lossLimitResetAt ?? null;
 
   return (
     <div className="min-h-screen bg-[#0d1117] text-[#e6edf3] font-sans">
@@ -427,19 +429,28 @@ export default function DashboardPage() {
               <Stat label="Trades/week" value={(state?.tradesPerWeek ?? 0).toFixed(2)} />
             </div>
             <div className="mt-3 pt-3 border-t border-[#21262d] space-y-1.5 text-xs text-[#6e7681]">
-              <div className="flex justify-between">
-                <span>Start-of-day equity</span>
+              <div className="flex justify-between" title="Equity when the current 8h window started">
+                <span>Window-start equity (8h)</span>
                 <span className="text-white font-mono">
                   {fmtUsd(startOfDayEquity)}
                 </span>
               </div>
-              <div className="flex justify-between">
-                <span>
-                  Max daily loss ({(dailyLossLimit * 100).toFixed(0)}
-                  %)
-                </span>
+              <div className="flex justify-between" title="33% of window-start equity; resets every 8 hours">
+                <span>33% limit (8h)</span>
                 <span className="text-white font-mono">
                   {fmtUsd(maxDailyLoss)}
+                </span>
+              </div>
+              <div className="flex justify-between" title="Realized loss in current 8h window (capped at limit)">
+                <span>Used of limit</span>
+                <span className="text-white font-mono">
+                  {fmtUsd(lossLimitUsed)}
+                </span>
+              </div>
+              <div className="flex justify-between" title="When the current 8h loss-limit window started">
+                <span>Last reset</span>
+                <span className="text-white font-mono break-all">
+                  {lossLimitResetAt ? formatUtc(parseTimestamp(lossLimitResetAt), "datetime") : "—"}
                 </span>
               </div>
               <div className="flex justify-between" title="USDC allowance for CLOB; refreshed hourly">
