@@ -43,12 +43,12 @@ export interface LiveState {
   pausedSeconds: number;
   totalNoMarketSeconds: number;
   totalRtdsDownSeconds: number;
-  /** Hot path latency p50 (ms); updated every 30 min. */
-  hotPathP50Ms?: number;
-  /** Hot path latency p95 (ms); updated every 30 min. */
-  hotPathP95Ms?: number;
-  /** Hot path latency p99 (ms); updated every 30 min. */
-  hotPathP99Ms?: number;
+  /** Hot path latency p50 (ns); updated every 30 min. */
+  hotPathP50Ns?: number;
+  /** Hot path latency p95 (ns); updated every 30 min. */
+  hotPathP95Ns?: number;
+  /** Hot path latency p99 (ns); updated every 30 min. */
+  hotPathP99Ns?: number;
   botPaused: boolean;
   btcPrice: number | null;
   chainlinkBtcPrice: number | null;

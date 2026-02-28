@@ -91,18 +91,53 @@ function formatDuration(sec: number): string {
   return `${s}s`;
 }
 
-/** Pretty-print latency in µs using backend ms values (e.g. 4µs, 25µs, 1 200µs). */
+/** Pretty-print latency using backend ns values (ns/µs/ms). */
 function formatLatencyUs(v: number | undefined | null): string {
   if (v == null || !Number.isFinite(v)) return "—";
-  const us = v * 1000; // backend gives ms as f64
-  if (us < 0.5) return "<1µs";
-  if (us < 10) return `${us.toFixed(2)}µs`;
-  if (us < 100) return `${us.toFixed(1)}µs`;
-  if (us < 1000) return `${us.toFixed(0)}µs`;
-  // For >= 1ms, still show in µs but with a thin space for readability
-  if (us < 10_000) return `${(us / 1000).toFixed(2)}ms`;
-  if (us < 100_000) return `${(us / 1000).toFixed(1)}ms`;
-  return `${(us / 1000).toFixed(0)}ms`;
+  const ns = v; // backend now sends nanoseconds
+  if (ns < 1_000) return `${ns.toFixed(0)}ns`;
+  if (ns < 1_000_000) return `${(ns / 1_000).toFixed(2)}µs`;
+  if (ns < 10_000_000) return `${(ns / 1_000_000).toFixed(3)}ms`;
+  if (ns < 100_000_000) return `${(ns / 1_000_000).toFixed(2)}ms`;
+  return `${(ns / 1_000_000).toFixed(1)}ms`;
+}
+
+function sanitizeDecision(entry: DecisionLogEntry): string {
+  const r = (entry.reason ?? "").toString();
+  const up = r.toUpperCase();
+  if (entry.kind === "take") return "Trade executed";
+  if (entry.kind === "error") return "Order error";
+  if (up.includes("RISK")) return "Risk guard";
+  if (up.includes("NO SIGNAL")) return "No signal";
+  if (up.includes("SIZE")) return "Sizing constraint";
+  if (up.includes("PAUSE")) return "Bot paused";
+  if (up.includes("RTDS") || up.includes("CHAINLINK") || up.includes("BINANCE")) return "Price feed issue";
+  return "Skipped";
+}
+
+function computeAvgWinStreakTrades(trades: TradeRecord[]): number {
+  if (!Array.isArray(trades) || trades.length === 0) return 0;
+  const events = trades
+    .map((t) => ({
+      ts: parseTimestamp(t.timestamp).getTime(),
+      result: (t.result ?? "").toString().toUpperCase(),
+    }))
+    .filter((e) => Number.isFinite(e.ts))
+    .sort((a, b) => a.ts - b.ts);
+
+  const streaks: number[] = [];
+  let cur = 0;
+  for (const e of events) {
+    if (e.result === "WIN") {
+      cur += 1;
+      continue;
+    }
+    if (cur > 0) streaks.push(cur);
+    cur = 0;
+  }
+  if (cur > 0) streaks.push(cur);
+  if (streaks.length === 0) return 0;
+  return streaks.reduce((a, b) => a + b, 0) / streaks.length;
 }
 
 /** Start equity for the chart (111.80 based on initial investment). */
@@ -393,11 +428,16 @@ export default function DashboardPage() {
   const displayTrades = [...trades].sort(
     (a, b) => parseTimestamp(b.timestamp).getTime() - parseTimestamp(a.timestamp).getTime()
   );
-  const wins = state?.resolvedWinCount ?? localTrades.filter((t) => t.result === "WIN").length;
-  const losses = state?.resolvedLossCount ?? localTrades.filter((t) => t.result === "LOSS").length;
-  const totalResolved = wins + losses;
-  const winRate = totalResolved > 0 ? (wins / totalResolved) * 100 : 0;
-  const analyticsWinRate = state?.tradeWinRatePct ?? winRate;
+  // Truth for win-rate/streaks comes from backend analytics (closed positions).
+  // Fallbacks use merged table trades if backend is older.
+  const fallbackWins = trades.filter((t) => t.result === "WIN").length;
+  const fallbackLosses = trades.filter((t) => t.result === "LOSS").length;
+  const resolvedWins = state?.resolvedWinCount ?? fallbackWins;
+  const resolvedLosses = state?.resolvedLossCount ?? fallbackLosses;
+  const totalResolved = resolvedWins + resolvedLosses;
+  const winRate =
+    state?.tradeWinRatePct ??
+    (totalResolved > 0 ? (resolvedWins / totalResolved) * 100 : 0);
 
   // Current win streak: prefer backend metric when available; otherwise derive from analyticsTrades.
   const currentWinStreakTrades =
@@ -424,6 +464,7 @@ export default function DashboardPage() {
       }
       return streak;
     })();
+  const avgWinStreakTrades = computeAvgWinStreakTrades(analyticsTrades);
 
   const fmtUsd = (v: number | undefined | null, digits = 2) =>
     v == null ? "—" : `$${v.toFixed(digits)}`;
@@ -456,37 +497,46 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen bg-[#0d1117] text-[#e6edf3] font-sans">
       <div className="max-w-6xl mx-auto px-3 py-4 sm:px-6 sm:py-6 lg:px-8">
-        {/* Header */}
-        <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-          <div className="flex items-center gap-2">
-            <BarChart3 className="w-8 h-8 text-[#2dd4bf]" />
-            <h1 className="text-xl font-bold text-white">Polymarket Bot Dashboard</h1>
+        {/* Header — compact on mobile: icon + short title, then time + pause + refresh */}
+        <header className="flex items-center justify-between gap-3 mb-6 min-w-0">
+          <div className="flex items-center gap-2 min-w-0 shrink">
+            <BarChart3 className="w-7 h-7 sm:w-8 sm:h-8 text-[#2dd4bf] shrink-0" />
+            <h1 className="text-base sm:text-xl font-bold text-white truncate">
+              Polymarket Bot Dashboard
+            </h1>
           </div>
-          <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2 sm:gap-3 text-sm text-[#8b949e]">
-            <span className="flex items-center gap-1">
-              <RefreshCw className={`w-4 h-4 ${isAutoBurst ? "animate-spin" : ""}`} />
-              Updated {lastUpdated ? formatUtc(lastUpdated, "time") : "—"}
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 text-sm text-[#8b949e]">
+            <span
+              className="tabular-nums whitespace-nowrap"
+              title={lastUpdated ? `Updated ${formatUtc(lastUpdated, "datetime")}` : undefined}
+            >
+              {lastUpdated ? formatUtc(lastUpdated, "time") : "—"}
             </span>
             {state?.botPaused && (
               <span
-                className="inline-flex items-center justify-center rounded-full border border-amber-500/60 bg-amber-500/10 text-amber-400 px-2 py-1"
+                className="inline-flex items-center justify-center w-8 h-8 rounded-full border border-amber-500/60 bg-amber-500/10 text-amber-400"
                 title="Bot is paused"
+                aria-label="Paused"
               >
-                <Pause className="w-3 h-3" />
+                <Pause className="w-4 h-4" />
               </span>
             )}
             <button
               type="button"
               onClick={() => setIsAutoBurst(true)}
               disabled={isAutoBurst}
-              className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+              title={isAutoBurst ? "Refreshing…" : "Refresh (1s × 30s)"}
+              aria-label={isAutoBurst ? "Refreshing" : "Refresh"}
+              className={`inline-flex items-center justify-center w-8 h-8 sm:w-auto sm:h-auto sm:px-3 sm:py-1.5 rounded-full border text-xs font-medium transition-colors ${
                 isAutoBurst
                   ? "border-[#30363d] text-[#6e7681] cursor-default"
                   : "border-[#30363d] text-[#e6edf3] hover:bg-[#21262d]"
               }`}
             >
-              <RefreshCw className="w-3 h-3" />
-              {isAutoBurst ? "Auto refresh (1s · 30s)" : "Refresh (1s · 30s)"}
+              <RefreshCw className={`w-4 h-4 sm:w-3.5 sm:h-3.5 ${isAutoBurst ? "animate-spin" : ""}`} />
+              <span className="hidden sm:inline ml-1">
+                {isAutoBurst ? "Refreshing…" : "Refresh"}
+              </span>
             </button>
           </div>
         </header>
@@ -532,11 +582,13 @@ export default function DashboardPage() {
           <div className="rounded-xl bg-[#161b22] border border-[#30363d] p-5 transition-transform duration-200 hover:-translate-y-0.5">
             <p className="text-[#8b949e] text-sm mb-1">Win rate · Resolved trades</p>
             <p className="text-2xl font-bold text-white">
-              {analyticsWinRate.toFixed(0)}%{" "}
-              <span className="text-[#8b949e] font-normal">· {totalResolved} trades</span>
+              {winRate.toFixed(0)}%{" "}
+              <span className="text-[#8b949e] font-normal">
+                · {resolvedWins} of {totalResolved} trades
+              </span>
             </p>
             <p className="text-xs text-[#6e7681] mt-0.5">
-              {wins} wins · {losses} losses
+              {resolvedWins} wins · {resolvedLosses} losses
             </p>
           </div>
         </section>
@@ -661,6 +713,13 @@ export default function DashboardPage() {
                   </span>{" "}
                   trades
                 </div>
+                <div>
+                  Avg win streak:{" "}
+                  <span className="text-white font-mono">
+                    {avgWinStreakTrades.toFixed(1)}
+                  </span>{" "}
+                  trades
+                </div>
               </div>
             </div>
           </div>
@@ -723,19 +782,19 @@ export default function DashboardPage() {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
             <div className="flex items-center justify-between rounded-lg bg-[#0d1117]/60 px-3 py-2">
               <span className="text-white font-mono tabular-nums">
-                {formatLatencyUs(state?.hotPathP50Ms)}
+                {formatLatencyUs(state?.hotPathP50Ns)}
               </span>
               <span className="text-[#8b949e] text-xs sm:text-sm">p50 (median)</span>
             </div>
             <div className="flex items-center justify-between rounded-lg bg-[#0d1117]/60 px-3 py-2">
               <span className="text-white font-mono tabular-nums">
-                {formatLatencyUs(state?.hotPathP95Ms)}
+                {formatLatencyUs(state?.hotPathP95Ns)}
               </span>
               <span className="text-[#8b949e] text-xs sm:text-sm">p95</span>
             </div>
             <div className="flex items-center justify-between rounded-lg bg-[#0d1117]/60 px-3 py-2">
               <span className="text-white font-mono tabular-nums">
-                {formatLatencyUs(state?.hotPathP99Ms)}
+                {formatLatencyUs(state?.hotPathP99Ns)}
               </span>
               <span className="text-[#8b949e] text-xs sm:text-sm">p99</span>
             </div>
@@ -853,21 +912,41 @@ export default function DashboardPage() {
             Uptime
           </h2>
           <div className="grid grid-cols-4 gap-x-4 gap-y-2 text-sm items-baseline">
-            <div className="col-span-2 flex justify-between items-baseline gap-2">
+            <div className="col-span-2 flex items-baseline gap-2 min-w-0">
               <span className="text-[#8b949e] shrink-0">Total uptime:</span>
-              <span className="text-white font-mono tabular-nums">{formatDuration(state?.uptimeSeconds ?? 0)}</span>
+              <span
+                className="text-white font-mono tabular-nums text-right min-w-0 flex-1 truncate"
+                title={formatDuration(state?.uptimeSeconds ?? 0)}
+              >
+                {formatDuration(state?.uptimeSeconds ?? 0)}
+              </span>
             </div>
-            <div className="col-span-2 flex justify-between items-baseline gap-2">
+            <div className="col-span-2 flex items-baseline gap-2 min-w-0">
               <span className="text-[#8b949e] shrink-0">Paused:</span>
-              <span className="text-white font-mono tabular-nums">{formatDuration(state?.pausedSeconds ?? 0)}</span>
+              <span
+                className="text-white font-mono tabular-nums text-right min-w-0 flex-1 truncate"
+                title={formatDuration(state?.pausedSeconds ?? 0)}
+              >
+                {formatDuration(state?.pausedSeconds ?? 0)}
+              </span>
             </div>
-            <div className="col-span-2 flex justify-between items-baseline gap-2">
+            <div className="col-span-2 flex items-baseline gap-2 min-w-0">
               <span className="text-[#8b949e] shrink-0">RTDS stale:</span>
-              <span className="text-white font-mono tabular-nums">{formatDuration(state?.totalRtdsDownSeconds ?? 0)}</span>
+              <span
+                className="text-white font-mono tabular-nums text-right min-w-0 flex-1 truncate"
+                title={formatDuration(state?.totalRtdsDownSeconds ?? 0)}
+              >
+                {formatDuration(state?.totalRtdsDownSeconds ?? 0)}
+              </span>
             </div>
-            <div className="col-span-2 flex justify-between items-baseline gap-2">
+            <div className="col-span-2 flex items-baseline gap-2 min-w-0">
               <span className="text-[#8b949e] shrink-0">No market:</span>
-              <span className="text-white font-mono tabular-nums">{formatDuration(state?.totalNoMarketSeconds ?? 0)}</span>
+              <span
+                className="text-white font-mono tabular-nums text-right min-w-0 flex-1 truncate"
+                title={formatDuration(state?.totalNoMarketSeconds ?? 0)}
+              >
+                {formatDuration(state?.totalNoMarketSeconds ?? 0)}
+              </span>
             </div>
           </div>
           {state?.rtdsStale && (
@@ -1165,14 +1244,7 @@ function DecisionEntryList({
               {formatUtc(parseTimestamp(e.ts), "datetime")}
             </span>
             <DecisionKindBadge kind={e.kind} />
-            <span className="text-[#e6edf3]">{e.reason}</span>
-            {e.side != null && (
-              <span className="text-[#8b949e] font-mono text-xs">
-                {e.side}
-                {e.price != null && ` @ ${e.price.toFixed(2)}`}
-                {e.size_usdc != null && ` · $${e.size_usdc.toFixed(2)}`}
-              </span>
-            )}
+            <span className="text-[#e6edf3]">{sanitizeDecision(e)}</span>
           </li>
         ))}
       </ul>
